@@ -1,99 +1,130 @@
-# 蓝牙控制 - 方舟小车 Android App
 
-基于 Jetpack Compose 的蓝牙遥控 Android 应用，配合 STM32 方舟小车使用。
+# 🚗 蓝牙控制 - 方舟小车 Android App
 
-## 功能
+基于 **Jetpack Compose** 打造的现代化蓝牙遥控 Android 客户端，专为 **STM32 方舟小车**量身定制。具备高自由度的布局编辑、动态协议解析以及流畅的动画交互。
 
-- **蓝牙 SPP 连接** — 扫描配对设备，一键连接 HC-05/06
-- **虚拟摇杆** — 移动摇杆（推幅=速度）+ 转向摇杆
-- **夹爪控制** — 垂直滑块控制升降，按钮控制开闭
-- **状态监视** — 实时显示四电机转速、接收日志、RX 指示灯
-- **自定义命令** — 手动发送任意协议指令
-- **协议编辑器** — 查看内置协议、添加自定义命令（带参数模板）
-- **布局编辑** — 编辑模式下拖拽控件位置，支持缩放，配置持久化
-- **动画 + 震动** — Compose 动画过渡 + 按钮震动反馈
+---
 
-## 协议格式
+## ✨ 核心特性
 
-```
-发送: [command,param1,param2,...]\r\n
-接收: [command,param1,param2,...]
-```
+* **⚡ 蓝牙 SPP 稳定连接** — 支持经典蓝牙（RFCOMM），一键扫描、配对并秒连 HC-05/06 等主流蓝牙模块。
+* **🕹️ 智能双虚拟摇杆** — 左摇杆控制移动（推幅自适应速度），右摇杆精准控制转向。
+* **🦾 夹爪精准控制** — 垂直滑块线性调节升降高度，快捷按钮一键控制开闭。
+* **📊 数据实时监视** — 动态显示四轮电机转速，内置数据接收日志与 RX 状态指示灯。
+* **⌨️ 自定义命令发送** — 支持手动输入并发送任意协议指令，调试极度便利。
+* **🛠️ 可视化协议编辑器** — 内置标准控制协议，支持在 App 内直接添加、修改自定义命令模板。
+* **📐 自由画布布局编辑** — 开启编辑模式后，全界面控件支持**自由拖拽与缩放**，配置自动持久化，定制你的专属遥控面板。
+* **📳 沉浸式交互反馈** — 深度整合 Compose 丝滑动画过渡，配合细腻的按键震动反馈（Haptic）。
 
-### 内置命令
+---
 
-| 命令 | 格式 | 说明 |
-|------|------|------|
-| `joystick` | `[joystick,lx,ly,rx,ry]` | 移动控制，值 -100~100 |
-| `gripper` | `[gripper,x_speed,y_speed]` | 夹爪控制，值 -300~300 RPM |
-| `query` | `[query]` | 查询电机转速 |
-| `pid` | `[pid,motor,kp*100,ki*100,kd*100]` | PID 参数调节 |
-| `plot` | `[plot]` | 一次性获取速度数据 |
-| `auto` | `[auto]` | 开始自动发送 (100ms) |
-| `stop` | `[stop]` | 停止自动发送 |
+## 🛠️ 技术栈
 
-### 响应格式
+* **⚡ 核心架构：** Kotlin + Jetpack Compose (声明式 UI)
+* **🎨 视觉规范：** Material 3 控件库 + Compose Animation 动画引擎
+* **🔌 通信底座：** Bluetooth Classic SPP (RFCOMM)
+* **📦 数据处理：** Gson 序列化 + SharedPreferences 布局与协议本地持久化
 
-```
-[s,speed0,speed1,speed2,speed3]     — query 响应
-[p,d0,d1,d2,d3]                     — plot/auto 数据
-[rx:<原始指令>]                      — 回显
-```
+---
 
-## 技术栈
+## 📜 通信协议规范
 
-- Kotlin + Jetpack Compose
-- Material 3 + Compose Animation
-- Bluetooth Classic SPP (RFCOMM)
-- Gson 序列化
-- SharedPreferences 持久化
+应用采用标准文本流协议，通过 `\r\n`（换行符）进行帧隔离。
 
-## 编译
+### 📡 发送与接收格式
 
-用 Android Studio 打开项目目录，Sync Gradle 后直接 Run。
+> **发送：** `[command,param1,param2,...]\r\n`
+> **接收：** `[command,param1,param2,...]`
 
-```
-minSdk: 26 (Android 8.0)
-targetSdk: 33
-```
+### 1. 内置控制命令表
 
-## 自定义协议扩展
+| 命令 (Command) | 格式 (Format) | 参数说明 | 触发场景/作用 |
+| --- | --- | --- | --- |
+| **`joystick`** | `[joystick,lx,ly,rx,ry]` | `x, y` 范围：`-100 ~ 100` | 虚拟摇杆坐标变化时实时触发 |
+| **`gripper`** | `[gripper,x_speed,y_speed]` | 速度范围：`-300 ~ 300` RPM | 夹爪升降与开闭控制 |
+| **`query`** | `[query]` | 无参数 | 主动查询当前电机转速 |
+| **`pid`** | `[pid,motor,kp*100,ki*100,kd*100]` | 参数放大了 100 倍的整型值 | PID 调参面板提交时发送 |
+| **`plot`** | `[plot]` | 无参数 | 单次获取当前波形数据 |
+| **`auto`** | `[auto]` | 无参数 | 开启定时自动发送（默认 100ms） |
+| **`stop`** | `[stop]` | 无参数 | 停止定时自动发送 |
+
+### 2. 下位机响应格式
+
+* **`query` 响应：** `[s,speed0,speed1,speed2,speed3]` —— 返回四个电机的当前实时转速。
+* **波形数据：** `[p,d0,d1,d2,d3]` —— 用于 `plot` 或 `auto` 模式下的动态数据流解析。
+* **控制回显：** `[rx:<原始指令>]` —— 用于日志面板调试输出。
+
+---
+
+## 🔧 自定义协议扩展
+
+### 👨‍💻 代码方式注册
+
+你可以在底层直接继承 `ProtocolHandler` 来扩展小车的功能：
 
 ```kotlin
-// 代码方式注册
 val engine = ProtocolEngine()
+
 engine.registerHandler(object : ProtocolHandler {
     override val command = "motor"
-    override fun parse(params: List<String>) = ...
-    override fun serialize(message: ProtocolMessage) = ...
+    override fun parse(params: List<String>) = { /* 解析下位机数据 */ }
+    override fun serialize(message: ProtocolMessage) = { /* 序列化发送数据 */ }
 })
 
-// 或通过 App 内协议编辑器 UI 添加
 ```
 
-## 目录结构
+### 📱 界面方式添加
 
-```
+无需重新编译！直接在 App 内的 **协议编辑器** UI 界面中，动态添加新指令并配置参数模板。
+
+---
+
+## 📂 项目目录结构
+
+```text
 app/src/main/java/com/fangzhou/carcontrol/
-├── MainActivity.kt              # 入口
-├── MainViewModel.kt             # 状态管理
+├── MainActivity.kt               # 应用入口，权限请求与主生命周期管理
+├── MainViewModel.kt              # 核心状态机，连接 UI 与业务逻辑
 ├── bluetooth/
-│   ├── BluetoothManager.kt      # 蓝牙连接
-│   ├── ProtocolEngine.kt        # 协议解析引擎
-│   └── ProtocolCommandStore.kt  # 协议命令持久化
+│   ├── BluetoothManager.kt       # 经典蓝牙连接管理（Socket 读写线程）
+│   ├── ProtocolEngine.kt         # 协议数据包解析与分发引擎
+│   └── ProtocolCommandStore.kt   # 自定义协议本地持久化
 ├── layout/
-│   └── LayoutConfig.kt          # 控件布局配置
+│   └── LayoutConfig.kt           # 控件坐标、大小等自由布局配置模型
 └── ui/
-    ├── ControlPanel.kt          # 主控制面板
-    ├── JoystickPad.kt           # 虚拟摇杆
-    ├── DraggableWidget.kt       # 可拖拽容器
-    ├── StatusDisplay.kt         # 状态显示
-    ├── BtConnectionDialog.kt    # 蓝牙设备选择
-    ├── ProtocolEditorScreen.kt  # 协议编辑器
-    ├── CustomCommandDialog.kt   # 自定义命令
-    └── HapticManager.kt         # 震动反馈
+    ├── ControlPanel.kt           # 遥控主面板（包含自由画布）
+    ├── JoystickPad.kt            # 自定义虚拟摇杆组件
+    ├── DraggableWidget.kt        # 可拖拽、缩放的通用高阶容器
+    ├── StatusDisplay.kt          # 仪表盘、数显与日志视图
+    ├── BtConnectionDialog.kt     # 蓝牙设备搜索与选择弹窗
+    ├── ProtocolEditorScreen.kt   # 协议动态编辑器界面
+    ├── CustomCommandDialog.kt    # 快捷命令手动发送弹窗
+    └── HapticManager.kt          # 触觉震动反馈管理工具
+
 ```
 
-## License
+---
 
-MIT
+## 🚀 编译与运行
+
+1. 使用最新版本的 **Android Studio** 打开项目根目录。
+2. 等待 Gradle 依赖同步（Sync）完成。
+3. 连接手机或开启模拟器（需支持蓝牙），点击 **Run** 即可。
+
+```toml
+minSdk = 26     # Android 8.0 Oreo (保证蓝牙与高频动画性能)
+targetSdk = 33  # Android 13
+
+```
+
+---
+
+## 🤝 鸣谢
+
+特别感谢 **mimo** 对本项目的鼎力支持！
+
+---
+
+## 📄 开源协议
+
+本项目基于 [MIT License](https://www.google.com/search?q=LICENSE) 协议开源。
