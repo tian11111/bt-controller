@@ -25,3 +25,6 @@ captures/
 
 # Debug
 *.hprof
+
+# Release build artifacts
+app/release/
