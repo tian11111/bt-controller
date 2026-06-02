@@ -28,3 +28,7 @@ captures/
 
 # Release build artifacts
 app/release/
+
+# Temp files
+*.jpg
+!screenshot.jpg
