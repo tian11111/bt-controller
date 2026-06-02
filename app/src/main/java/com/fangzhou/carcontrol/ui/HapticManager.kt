@@ -9,14 +9,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
-/**
- * 震动反馈管理器
- * - light(): 轻触反馈 (10ms) — 普通按钮
- * - medium(): 中等反馈 (25ms) — 夹爪操作
- * - heavy(): 重度反馈 (50ms) — 停止/紧急操作
- * - success(): 成功反馈 (短-长) — 连接成功
- * - error(): 错误反馈 (三连短) — 连接失败
- */
 class HapticManager(context: Context) {
 
     private val vibrator: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -28,31 +20,31 @@ class HapticManager(context: Context) {
     }
 
     fun light() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(10, 80))
+        vibrator?.vibrate(VibrationEffect.createOneShot(15, 120))
     }
 
     fun medium() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(25, 130))
+        vibrator?.vibrate(VibrationEffect.createOneShot(40, 200))
     }
 
     fun heavy() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(50, 200))
+        vibrator?.vibrate(VibrationEffect.createOneShot(80, 255))
     }
 
     fun success() {
-        val pattern = longArrayOf(0, 15, 50, 30)
-        val amplitudes = intArrayOf(0, 80, 0, 160)
+        val pattern = longArrayOf(0, 20, 60, 40)
+        val amplitudes = intArrayOf(0, 150, 0, 255)
         vibrator?.vibrate(VibrationEffect.createWaveform(pattern, amplitudes, -1))
     }
 
     fun error() {
-        val pattern = longArrayOf(0, 20, 40, 20, 40, 20)
-        val amplitudes = intArrayOf(0, 150, 0, 150, 0, 150)
+        val pattern = longArrayOf(0, 30, 50, 30, 50, 30)
+        val amplitudes = intArrayOf(0, 200, 0, 200, 0, 200)
         vibrator?.vibrate(VibrationEffect.createWaveform(pattern, amplitudes, -1))
     }
 
     fun tick() {
-        vibrator?.vibrate(VibrationEffect.createOneShot(5, 50))
+        vibrator?.vibrate(VibrationEffect.createOneShot(8, 80))
     }
 }
 

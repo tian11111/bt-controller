@@ -31,11 +31,11 @@ data class ProtocolCommandDef(
             paramValues.forEachIndexed { i, v ->
                 result = result.replace("{$i}", v)
             }
-            return "$result\r\n"
+            return result
         }
         // 默认格式: [name,param1,param2,...]
         val paramsStr = if (paramValues.isNotEmpty()) ",${paramValues.joinToString(",")}" else ""
-        return "[$name$paramsStr]\r\n"
+        return "[$name$paramsStr]"
     }
 
     /**

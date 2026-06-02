@@ -130,7 +130,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendCustomCommand(command: String) {
-        btManager.send("$command\r\n")
+        btManager.send(command)
         addLog("TX: $command")
     }
 

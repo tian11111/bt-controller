@@ -79,22 +79,41 @@ fun ControlPanel(
     var parentSize by remember { mutableStateOf(IntSize(1080, 600)) }
     var showCustomCmd by remember { mutableStateOf(false) }
 
-    // 20Hz 自动发送
+    // 自动发送（变化检测，松手发一次停机命令）
     LaunchedEffect(connectionState) {
         if (connectionState == ConnectionState.CONNECTED) {
+            var lastCmd = ""
+            var wasCenter = true
             while (true) {
                 val s = viewModel.carState.value
-                viewModel.sendJoystick(
-                    (s.moveX * 100).toInt(),
-                    (s.moveY * 100).toInt(),
-                    (s.turnX * 100).toInt(),
-                    0
-                )
-                val gx = (s.gripperUpDown * 300).toInt()
-                if (kotlin.math.abs(gx) > 5) {
+                val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }
+                val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }
+                val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }
+                val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 15) 0 else it }
+
+                val isCenter = (lx == 0 && ly == 0 && rx == 0)
+                val cmd = "$lx,$ly,$rx"
+
+                // 值变化 或 从移动回中 → 发送
+                if (cmd != lastCmd) {
+                    viewModel.sendJoystick(lx, ly, rx, 0)
+                    lastCmd = cmd
+                }
+
+                // 回中瞬间多发几次确保收到
+                if (isCenter && !wasCenter) {
+                    repeat(3) {
+                        viewModel.sendJoystick(0, 0, 0, 0)
+                        delay(30)
+                    }
+                }
+                wasCenter = isCenter
+
+                if (kotlin.math.abs(gx) > 15) {
                     viewModel.sendGripper(0, gx)
                 }
-                delay(50)
+
+                delay(40)
             }
         }
     }
@@ -322,18 +341,21 @@ private fun BoxScope.LayoutWidgets(
         }
     }
 
-    // ---- 停止 ----
-    DraggableWidget(
-        isEditing = isEditing,
-        offsetX = 0.51f,
-        offsetY = 0.80f,
-        onOffsetChange = { _, _ -> },
-        parentSize = parentSize
-    ) {
-        IconButton(
-            onClick = { haptic.heavy(); viewModel.sendStop() },
-            modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF333355)).padding(4.dp)
-        ) { Icon(Icons.Default.Stop, "停止", tint = Color(0xFFEF5350)) }
+    // ---- 急停 ----
+    val stopW = w(WidgetIds.BUTTON_STOP)
+    if (stopW?.visible != false) {
+        DraggableWidget(
+            isEditing = isEditing,
+            offsetX = stopW?.offsetX ?: 0.51f,
+            offsetY = stopW?.offsetY ?: 0.80f,
+            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_STOP, dx, dy) },
+            parentSize = parentSize
+        ) {
+            IconButton(
+                onClick = { haptic.heavy(); viewModel.sendStop() },
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF333355)).padding(4.dp)
+            ) { Icon(Icons.Default.Stop, "急停", tint = Color(0xFFEF5350)) }
+        }
     }
 
     // ---- 状态显示 ----

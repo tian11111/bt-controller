@@ -35,6 +35,7 @@ object WidgetIds {
     const val BUTTON_GRIPPER_CLOSE = "button_gripper_close"
     const val BUTTON_QUERY = "button_query"
     const val BUTTON_AUTO_PLOT = "button_auto_plot"
+    const val BUTTON_STOP = "button_stop"
     const val STATUS_DISPLAY = "status_display"
 
     val ALL_IDS = listOf(
@@ -45,6 +46,7 @@ object WidgetIds {
         BUTTON_GRIPPER_CLOSE,
         BUTTON_QUERY,
         BUTTON_AUTO_PLOT,
+        BUTTON_STOP,
         STATUS_DISPLAY
     )
 }
@@ -66,7 +68,9 @@ class LayoutPreferences(context: Context) {
         val json = prefs.getString(KEY_LAYOUT, null) ?: return defaultLayout()
         return try {
             val type = object : TypeToken<LayoutConfig>() {}.type
-            gson.fromJson(json, type) ?: defaultLayout()
+            val config: LayoutConfig = gson.fromJson(json, type) ?: defaultLayout()
+            // isEditing 每次启动都重置为 false
+            config.copy(isEditing = false)
         } catch (_: Exception) {
             defaultLayout()
         }
@@ -89,6 +93,7 @@ class LayoutPreferences(context: Context) {
             WidgetIds.BUTTON_GRIPPER_CLOSE to (0.42f to 0.68f),
             WidgetIds.BUTTON_QUERY to (0.33f to 0.80f),
             WidgetIds.BUTTON_AUTO_PLOT to (0.42f to 0.80f),
+            WidgetIds.BUTTON_STOP to (0.51f to 0.80f),
             WidgetIds.STATUS_DISPLAY to (0.72f to 0.08f),
         )
         return LayoutConfig(
