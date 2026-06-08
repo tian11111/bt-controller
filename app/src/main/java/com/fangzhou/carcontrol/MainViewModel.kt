@@ -4,14 +4,15 @@ import android.app.Application
 import android.bluetooth.BluetoothDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.fangzhou.carcontrol.bluetooth.BluetoothManager
-import com.fangzhou.carcontrol.bluetooth.ConnectionState
+import com.fangzhou.carcontrol.connection.ConnectionManager
+import com.fangzhou.carcontrol.connection.ConnectionType
 import com.fangzhou.carcontrol.bluetooth.ProtocolCommandStore
 import com.fangzhou.carcontrol.bluetooth.ProtocolEngine
 import com.fangzhou.carcontrol.bluetooth.ProtocolMessage
 import com.fangzhou.carcontrol.layout.LayoutConfig
 import com.fangzhou.carcontrol.layout.LayoutPreferences
 import com.fangzhou.carcontrol.layout.WidgetLayout
+import com.fangzhou.carcontrol.wifi.WifiConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +32,7 @@ data class CarState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    val btManager = BluetoothManager(application)
+    val connectionManager = ConnectionManager(application)
     val protocolEngine = ProtocolEngine()
     val protocolStore = ProtocolCommandStore(application)
     private val layoutPrefs = LayoutPreferences(application)
@@ -46,23 +47,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
-            btManager.receivedData.collect { raw ->
+            connectionManager.receivedData.collect { raw ->
                 processReceivedData(raw)
             }
         }
     }
 
     fun getPairedDevices(): List<BluetoothDevice> {
-        btManager.refreshPairedDevices()
-        return btManager.pairedDevices.value
+        connectionManager.btManager.refreshPairedDevices()
+        return connectionManager.btManager.pairedDevices.value
     }
 
-    fun connectDevice(device: BluetoothDevice) {
-        btManager.connect(device)
+    fun connectBluetooth(device: BluetoothDevice) {
+        connectionManager.connectBluetooth(device)
+        addLog("连接蓝牙: {device.name}")
+    }
+
+    fun connectWifi(config: WifiConfig) {
+        connectionManager.connectWifi(config)
+        addLog("连接WiFi: {config.ip}:{config.port}")
     }
 
     fun disconnect() {
-        btManager.disconnect()
+        connectionManager.disconnect()
+        addLog("断开连接")
     }
 
     private fun processReceivedData(raw: String) {
@@ -84,11 +92,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 is ProtocolMessage.Raw -> {
-                    addLog("RX: ${msg.command} ${msg.params}")
+                    addLog("RX: {msg.command} {msg.params}")
                     _carState.value = state.copy(lastReceivedRaw = raw.trim())
                 }
                 is ProtocolMessage.Text -> {
-                    addLog("RX: ${msg.content}")
+                    addLog("RX: {msg.content}")
                 }
                 else -> {
                     _carState.value = state.copy(lastReceivedRaw = raw.trim())
@@ -97,41 +105,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (messages.isEmpty() && raw.isNotBlank()) {
-            addLog("RX: ${raw.trim()}")
+            addLog("RX: {raw.trim()}")
             _carState.value = state.copy(lastReceivedRaw = raw.trim())
         }
     }
 
     fun sendJoystick(lx: Int, ly: Int, rx: Int = 0, ry: Int = 0) {
         val data = protocolEngine.createJoystick(lx, ly, rx, ry)
-        btManager.send(data)
+        connectionManager.send(data)
     }
 
     fun sendGripper(xSpeed: Int, ySpeed: Int) {
         val data = protocolEngine.createGripper(xSpeed, ySpeed)
-        btManager.send(data)
+        connectionManager.send(data)
     }
 
     fun sendQuery() {
-        btManager.send(protocolEngine.createQuery())
+        connectionManager.send(protocolEngine.createQuery())
     }
 
     fun sendAutoPlot(enable: Boolean) {
         if (enable) {
-            btManager.send(protocolEngine.createAutoStart())
+            connectionManager.send(protocolEngine.createAutoStart())
         } else {
-            btManager.send(protocolEngine.createAutoStop())
+            connectionManager.send(protocolEngine.createAutoStop())
         }
     }
 
     fun sendStop() {
-        btManager.send(protocolEngine.createJoystick(0, 0, 0, 0))
-        btManager.send(protocolEngine.createGripper(0, 0))
+        connectionManager.send(protocolEngine.createJoystick(0, 0, 0, 0))
+        connectionManager.send(protocolEngine.createGripper(0, 0))
     }
 
     fun sendCustomCommand(command: String) {
-        btManager.send(command)
-        addLog("TX: $command")
+        connectionManager.send(command)
+        addLog("TX: command")
     }
 
     fun updateMoveJoystick(x: Float, y: Float) {
@@ -157,7 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun addLog(msg: String) {
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
             .format(java.util.Date())
-        logBuffer.addLast("[$timestamp] $msg")
+        logBuffer.addLast("[timestamp] msg")
         if (logBuffer.size > 100) logBuffer.removeFirst()
         _carState.value = _carState.value.copy(logMessages = logBuffer.toList())
     }
@@ -214,6 +222,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        btManager.destroy()
+        connectionManager.destroy()
     }
 }

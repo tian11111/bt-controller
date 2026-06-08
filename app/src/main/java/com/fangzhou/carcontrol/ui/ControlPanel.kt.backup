@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -83,37 +84,45 @@ fun ControlPanel(
     var parentSize by remember { mutableStateOf(IntSize(1080, 600)) }
     var showCustomCmd by remember { mutableStateOf(false) }
 
-    // 自动发送（变化检测，松手立即停止，推幅=速度）
+    // 自动发送（变化检测，松手发一次停机命令）
     LaunchedEffect(connectionState) {
         if (connectionState == UnifiedConnectionState.CONNECTED) {
             var lastCmd = ""
-            var lastGx = 0
+            var wasCenter = true
             while (true) {
                 val s = viewModel.carState.value
-                // 线性映射，仅保留极小死区(2)防漂移
-                val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
-                val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
-                val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
-                val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 10) 0 else it }.coerceIn(-300, 300)
+                val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }
+                val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }
+                val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }
+                val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 15) 0 else it }
 
-                val cmd = "$lx,$ly,$rx"
+                val isCenter = (lx == 0 && ly == 0 && rx == 0)
+                val cmd = "lx,ly,rx"
 
-                // 值变化立即发送
+                // 值变化 或 从移动回中 → 发送
                 if (cmd != lastCmd) {
                     viewModel.sendJoystick(lx, ly, rx, 0)
                     lastCmd = cmd
                 }
 
-                // 夹爪：值变化就发送（包括回零）
-                if (gx != lastGx) {
+                // 回中瞬间多发几次确保收到
+                if (isCenter && !wasCenter) {
+                    repeat(3) {
+                        viewModel.sendJoystick(0, 0, 0, 0)
+                        delay(30)
+                    }
+                }
+                wasCenter = isCenter
+
+                if (kotlin.math.abs(gx) > 15) {
                     viewModel.sendGripper(0, gx)
-                    lastGx = gx
                 }
 
-                delay(20)  // 20ms周期，提升响应
+                delay(40)
             }
         }
     }
+
     // 编辑模式边框透明度动画
     val editBorderAlpha by animateFloatAsState(
         targetValue = if (isEditing) 1f else 0f,
@@ -146,268 +155,180 @@ fun ControlPanel(
         // 自定义命令对话框 - 带滑入动画
         AnimatedVisibility(
             visible = showCustomCmd,
-            enter = fadeIn(tween(200)) + slideInVertically(
-                animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                initialOffsetY = { -it / 3 }
-            ),
-            exit = fadeOut(tween(150)) + slideOutVertically(
-                animationSpec = tween(150),
-                targetOffsetY = { -it / 4 }
-            )
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+            ) + fadeIn(),
+            exit = slideOutVertically(
+                targetOffsetY = { it },
+                animationSpec = tween(250)
+            ) + fadeOut()
         ) {
             CustomCommandDialog(
                 onSend = { cmd -> viewModel.sendCustomCommand(cmd) },
-                onDismiss = { showCustomCmd = false }
+                onClose = { showCustomCmd = false }
             )
         }
     }
 }
 
-// ==================== 垂直滑块 ====================
-
 @Composable
-private fun VerticalSlider(
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    onValueChangeFinished: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            onValueChangeFinished = onValueChangeFinished,
-            valueRange = -1f..1f,
-            modifier = Modifier
-                .height(40.dp)
-                .width(140.dp)
-                .graphicsLayer { rotationZ = -90f },
-            colors = SliderDefaults.colors(
-                thumbColor = Color(0xFFAB47BC),
-                activeTrackColor = Color(0xFFAB47BC),
-                inactiveTrackColor = Color(0xFF333355)
-            )
-        )
-    }
-}
-
-// ==================== 统一布局 ====================
-
-@Composable
-private fun BoxScope.LayoutWidgets(
+fun BoxScope.LayoutWidgets(
     viewModel: MainViewModel,
     connectionState: UnifiedConnectionState,
     parentSize: IntSize,
     isEditing: Boolean
 ) {
-    val layoutConfig by viewModel.layoutConfig.collectAsState()
     val carState by viewModel.carState.collectAsState()
-    val haptic = rememberHaptic()
+    val layoutConfig by viewModel.layoutConfig.collectAsState()
 
-    val w = { id: String -> layoutConfig.widgets.find { it.id == id } }
-
-    // ---- 移动摇杆 ----
-    val moveW = w(WidgetIds.JOYSTICK_MOVE)
-    if (moveW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = moveW?.offsetX ?: 0.10f,
-            offsetY = moveW?.offsetY ?: 0.50f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.JOYSTICK_MOVE, dx, dy) },
-            parentSize = parentSize
-        ) {
-            JoystickPad(size = (150 * (moveW?.scale ?: 1f)).dp, label = "移动(推幅=速度)", activeColor = Color(0xFF4FC3F7), onDragStart = { haptic.tick() }) { x, y ->
-                viewModel.updateMoveJoystick(x, y)
-            }
-        }
-    }
-
-    // ---- 转向摇杆 ----
-    val turnW = w(WidgetIds.JOYSTICK_TURN)
-    if (turnW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = turnW?.offsetX ?: 0.10f,
-            offsetY = turnW?.offsetY ?: 0.12f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.JOYSTICK_TURN, dx, dy) },
-            parentSize = parentSize
-        ) {
-            JoystickPad(size = (120 * (turnW?.scale ?: 1f)).dp, label = "转向", activeColor = Color(0xFFFFD54F), onDragStart = { haptic.tick() }) { x, _ ->
-                viewModel.updateTurnJoystick(x)
-            }
-        }
-    }
-
-    // ---- 夹爪升降 ----
-    val upDownW = w(WidgetIds.SLIDER_GRIPPER_UPDOWN)
-    if (upDownW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = upDownW?.offsetX ?: 0.35f,
-            offsetY = upDownW?.offsetY ?: 0.30f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.SLIDER_GRIPPER_UPDOWN, dx, dy) },
-            parentSize = parentSize
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("夹爪升降", color = Color(0xFF888899), fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                VerticalSlider(
-                    value = carState.gripperUpDown,
-                    onValueChange = { viewModel.updateGripperUpDown(it) },
-                    onValueChangeFinished = { viewModel.updateGripperUpDown(0f) },
-                    modifier = Modifier.height(150.dp).width(50.dp)
-                )
-            }
-        }
-    }
-
-    // ---- 夹爪开 ----
-    val openW = w(WidgetIds.BUTTON_GRIPPER_OPEN)
-    if (openW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = openW?.offsetX ?: 0.33f,
-            offsetY = openW?.offsetY ?: 0.68f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_GRIPPER_OPEN, dx, dy) },
-            parentSize = parentSize
-        ) {
-            GripperButton(
-                text = "夹爪开",
-                isActive = carState.gripperOpen,
-                activeColor = Color(0xFF66BB6A),
-                onClick = {
-                    haptic.medium()
-                    val open = !carState.gripperOpen
-                    viewModel.setGripperOpen(open)
-                    if (open) { viewModel.setGripperClose(false); viewModel.sendGripper(300, 0) }
-                    else viewModel.sendGripper(0, 0)
+    // 遍历所有 widget
+    for (widget in layoutConfig.widgets.filter { it.visible || isEditing }) {
+        val haptic = rememberHaptic()
+        when (widget.id) {
+            WidgetIds.JOYSTICK_MOVE -> {
+                DraggableWidget(
+                    id = widget.id,
+                    offsetX = widget.offsetX,
+                    offsetY = widget.offsetY,
+                    scale = widget.scale,
+                    parentSize = parentSize,
+                    isEditing = isEditing,
+                    isVisible = widget.visible,
+                    onMove = { id, dx, dy -> viewModel.updateWidgetPosition(id, dx, dy) },
+                    onScaleChange = { id, sc -> viewModel.updateWidgetScale(id, sc) },
+                    onToggleVisibility = { id -> viewModel.toggleWidgetVisibility(id) }
+                ) {
+                    JoystickPad(
+                        size = 180.dp,
+                        onMove = { x, y ->
+                            viewModel.updateMoveJoystick(x, y)
+                        },
+                        enabled = connectionState == UnifiedConnectionState.CONNECTED && !isEditing,
+                        haptic = haptic
+                    )
                 }
-            )
-        }
-    }
-
-    // ---- 夹爪关 ----
-    val closeW = w(WidgetIds.BUTTON_GRIPPER_CLOSE)
-    if (closeW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = closeW?.offsetX ?: 0.42f,
-            offsetY = closeW?.offsetY ?: 0.68f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_GRIPPER_CLOSE, dx, dy) },
-            parentSize = parentSize
-        ) {
-            GripperButton(
-                text = "夹爪关",
-                isActive = carState.gripperClose,
-                activeColor = Color(0xFFEF5350),
-                onClick = {
-                    haptic.medium()
-                    val close = !carState.gripperClose
-                    viewModel.setGripperClose(close)
-                    if (close) { viewModel.setGripperOpen(false); viewModel.sendGripper(-300, 0) }
-                    else viewModel.sendGripper(0, 0)
+            }
+            WidgetIds.JOYSTICK_TURN -> {
+                DraggableWidget(
+                    id = widget.id,
+                    offsetX = widget.offsetX,
+                    offsetY = widget.offsetY,
+                    scale = widget.scale,
+                    parentSize = parentSize,
+                    isEditing = isEditing,
+                    isVisible = widget.visible,
+                    onMove = { id, dx, dy -> viewModel.updateWidgetPosition(id, dx, dy) },
+                    onScaleChange = { id, sc -> viewModel.updateWidgetScale(id, sc) },
+                    onToggleVisibility = { id -> viewModel.toggleWidgetVisibility(id) }
+                ) {
+                    JoystickPad(
+                        size = 140.dp,
+                        singleAxis = true,
+                        onMove = { x, _ ->
+                            viewModel.updateTurnJoystick(x)
+                        },
+                        enabled = connectionState == UnifiedConnectionState.CONNECTED && !isEditing,
+                        haptic = haptic
+                    )
                 }
-            )
-        }
-    }
-
-    // ---- 查询 ----
-    val queryW = w(WidgetIds.BUTTON_QUERY)
-    if (queryW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = queryW?.offsetX ?: 0.33f,
-            offsetY = queryW?.offsetY ?: 0.80f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_QUERY, dx, dy) },
-            parentSize = parentSize
-        ) {
-            ActionButton(text = "查询", color = Color(0xFF4FC3F7)) { haptic.light(); viewModel.sendQuery() }
-        }
-    }
-
-    // ---- 自动 ----
-    val autoW = w(WidgetIds.BUTTON_AUTO_PLOT)
-    if (autoW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = autoW?.offsetX ?: 0.42f,
-            offsetY = autoW?.offsetY ?: 0.80f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_AUTO_PLOT, dx, dy) },
-            parentSize = parentSize
-        ) {
-            ActionButton(text = "自动", color = Color(0xFFFFD54F)) { haptic.light(); viewModel.sendAutoPlot(true) }
-        }
-    }
-
-    // ---- 急停 ----
-    val stopW = w(WidgetIds.BUTTON_STOP)
-    if (stopW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = stopW?.offsetX ?: 0.51f,
-            offsetY = stopW?.offsetY ?: 0.80f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_STOP, dx, dy) },
-            parentSize = parentSize
-        ) {
-            IconButton(
-                onClick = { haptic.heavy(); viewModel.sendStop() },
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF333355)).padding(4.dp)
-            ) { Icon(Icons.Default.Stop, "急停", tint = Color(0xFFEF5350)) }
-        }
-    }
-
-    // ---- 状态显示 ----
-    val statusW = w(WidgetIds.STATUS_DISPLAY)
-    if (statusW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = statusW?.offsetX ?: 0.72f,
-            offsetY = statusW?.offsetY ?: 0.08f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.STATUS_DISPLAY, dx, dy) },
-            parentSize = parentSize
-        ) {
-            StatusDisplay(
-                motorSpeeds = carState.motorSpeeds,
-                lastReceived = carState.lastReceivedRaw,
-                logMessages = carState.logMessages,
-                connectionLabel = when (connectionState) {
+            }
+            WidgetIds.STATUS_DISPLAY -> {
+                DraggableWidget(
+                    id = widget.id,
+                    offsetX = widget.offsetX,
+                    offsetY = widget.offsetY,
+                    scale = widget.scale,
+                    parentSize = parentSize,
+                    isEditing = isEditing,
+                    isVisible = widget.visible,
+                    onMove = { id, dx, dy -> viewModel.updateWidgetPosition(id, dx, dy) },
+                    onScaleChange = { id, sc -> viewModel.updateWidgetScale(id, sc) },
+                    onToggleVisibility = { id -> viewModel.toggleWidgetVisibility(id) }
+                ) {
+                    StatusDisplay(
+                        motorSpeeds = carState.motorSpeeds,
+                        lastRx = carState.lastReceivedRaw,
+                        connectionLabel = when (connectionState) {
                             UnifiedConnectionState.CONNECTED -> "已连接"
                             UnifiedConnectionState.CONNECTING -> "连接中..."
                             UnifiedConnectionState.ERROR -> "连接失败"
                             UnifiedConnectionState.DISCONNECTED -> "未连接"
-                        },
-                modifier = Modifier
-                    .width((220 * (statusW?.scale ?: 1f)).dp)
-                    .fillMaxHeight(0.88f)
-            )
+                        }
+                    )
+                }
+            }
+            WidgetIds.GRIPPER_SLIDER -> {
+                DraggableWidget(
+                    id = widget.id,
+                    offsetX = widget.offsetX,
+                    offsetY = widget.offsetY,
+                    scale = widget.scale,
+                    parentSize = parentSize,
+                    isEditing = isEditing,
+                    isVisible = widget.visible,
+                    onMove = { id, dx, dy -> viewModel.updateWidgetPosition(id, dx, dy) },
+                    onScaleChange = { id, sc -> viewModel.updateWidgetScale(id, sc) },
+                    onToggleVisibility = { id -> viewModel.toggleWidgetVisibility(id) }
+                ) {
+                    GripperSlider(
+                        value = carState.gripperUpDown,
+                        onValueChange = { viewModel.updateGripperUpDown(it) },
+                        enabled = connectionState == UnifiedConnectionState.CONNECTED && !isEditing
+                    )
+                }
+            }
         }
     }
 }
 
-// ==================== 带动画的按钮组件 ====================
+@Composable
+private fun GripperSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    enabled: Boolean
+) {
+    Column(
+        modifier = Modifier
+            .width(60.dp)
+            .height(220.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF1E1E2E).copy(alpha = 0.9f))
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("夹爪升降", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = -1f..1f,
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxHeight()
+                .graphicsLayer { rotationZ = 270f },
+            colors = SliderDefaults.colors(
+                thumbColor = Color(0xFF00E5FF),
+                activeTrackColor = Color(0xFF00E5FF).copy(alpha = 0.7f),
+                inactiveTrackColor = Color.Gray.copy(alpha = 0.3f)
+            )
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            "{(value * 100).toInt()}%",
+            fontSize = 11.sp,
+            color = Color(0xFF00E5FF)
+        )
+    }
+}
 
 @Composable
-private fun GripperButton(
-    text: String,
-    isActive: Boolean,
-    activeColor: Color,
-    onClick: () -> Unit
-) {
-    val bgColor by animateColorAsState(
-        targetValue = if (isActive) activeColor else activeColor.copy(alpha = 0.6f),
-        animationSpec = tween(200),
-        label = "gripperColor"
-    )
-    val scale by animateFloatAsState(
-        targetValue = if (isActive) 1.08f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "gripperScale"
-    )
-
-    Button(
-        onClick = onClick,
-        colors = ButtonDefaults.buttonColors(containerColor = bgColor),
-        shape = RoundedCornerShape(8.dp),
+private fun Label(text: String) {
+    val scale by animateFloatAsState(targetValue = 1f, label = "labelScale")
+    Box(
         modifier = Modifier.graphicsLayer {
             scaleX = scale; scaleY = scale
         }
@@ -481,8 +402,8 @@ private fun Toolbar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 左侧
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // 左侧 - 连接按钮
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             IconButton(onClick = { haptic.light(); onShowBtDialog() }) {
                 Icon(Icons.Default.Search, "连接蓝牙", tint = if (connectionType == ConnectionType.BLUETOOTH) statusColor else Color.Gray)
             }
@@ -500,13 +421,14 @@ private fun Toolbar(
                         UnifiedConnectionState.CONNECTED -> "已连接"
                         UnifiedConnectionState.CONNECTING -> "连接中..."
                         UnifiedConnectionState.ERROR -> "错误"
-                        UnifiedConnectionState.DISCONNECTED -> "连接"
+                        UnifiedConnectionState.DISCONNECTED -> "未连接"
                     },
                     color = Color.White, fontSize = 13.sp
                 )
             }
         }
 
+        // 中间 - 标题显示当前连接类型
         Text(
             when (connectionType) {
                 ConnectionType.BLUETOOTH -> "蓝牙控制"
@@ -559,8 +481,4 @@ private fun Toolbar(
         }
     }
 }
-
-
-
-
 
