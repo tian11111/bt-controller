@@ -145,16 +145,31 @@ fun StatusDisplay(
             }
         }
 
-        // 最后接收
-        if (lastReceived.isNotEmpty()) {
-            Text(
-                text = "RX: $lastReceived",
-                color = Color(0xFF81C784),
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                maxLines = 1,
-                modifier = Modifier.padding(vertical = 2.dp)
-            )
+        // 最近接收 - 实时滚动显示
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color(0xFF0D0D1A))
+                .padding(4.dp)
+        ) {
+            if (lastReceived.isNotEmpty()) {
+                Text(
+                    text = "RX: $lastReceived",
+                    color = Color(0xFF81C784),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 2
+                )
+            } else {
+                Text(
+                    text = "RX: (无数据)",
+                    color = Color(0xFF555566),
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
         }
 
         // 日志

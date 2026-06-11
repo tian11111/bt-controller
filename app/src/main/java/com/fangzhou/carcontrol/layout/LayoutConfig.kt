@@ -5,28 +5,23 @@ import android.content.SharedPreferences
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
-/**
- * 控件位置和大小配置
- */
 data class WidgetLayout(
     val id: String,
     val offsetX: Float = 0f,
     val offsetY: Float = 0f,
     val scale: Float = 1.0f,
-    val visible: Boolean = true
+    val visible: Boolean = true,
+    val isCustom: Boolean = false,
+    val label: String? = null,
+    val command: String? = null,
+    val colorHex: Long = 0xFF4FC3F7
 )
 
-/**
- * 全局布局配置
- */
 data class LayoutConfig(
     val widgets: List<WidgetLayout> = emptyList(),
     val isEditing: Boolean = false
 )
 
-/**
- * 预定义控件ID
- */
 object WidgetIds {
     const val JOYSTICK_MOVE = "joystick_move"
     const val JOYSTICK_TURN = "joystick_turn"
@@ -51,9 +46,6 @@ object WidgetIds {
     )
 }
 
-/**
- * 布局配置持久化管理器
- */
 class LayoutPreferences(context: Context) {
 
     private val prefs: SharedPreferences =
@@ -69,7 +61,6 @@ class LayoutPreferences(context: Context) {
         return try {
             val type = object : TypeToken<LayoutConfig>() {}.type
             val config: LayoutConfig = gson.fromJson(json, type) ?: defaultLayout()
-            // isEditing 每次启动都重置为 false
             config.copy(isEditing = false)
         } catch (_: Exception) {
             defaultLayout()

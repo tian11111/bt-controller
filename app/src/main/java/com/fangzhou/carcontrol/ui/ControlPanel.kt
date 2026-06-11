@@ -25,7 +25,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Wifi
@@ -81,6 +84,7 @@ fun ControlPanel(
     val isEditing = layoutConfig.isEditing
 
     var parentSize by remember { mutableStateOf(IntSize(1080, 600)) }
+    var showAddButton by remember { mutableStateOf(false) }
     var showCustomCmd by remember { mutableStateOf(false) }
 
     // 自动发送（变化检测，松手立即停止，推幅=速度）
@@ -140,21 +144,23 @@ fun ControlPanel(
             onResetLayout = { viewModel.resetLayout() },
             onDisconnect = { viewModel.disconnect() },
             onShowCustomCmd = { showCustomCmd = true },
+            onAddCustom = { showAddButton = true },
             onShowProtocolEditor = onShowProtocolEditor
         )
 
-        // 自定义命令对话框 - 带滑入动画
-        AnimatedVisibility(
-            visible = showCustomCmd,
-            enter = fadeIn(tween(200)) + slideInVertically(
-                animationSpec = spring(stiffness = Spring.StiffnessMedium),
-                initialOffsetY = { -it / 3 }
-            ),
-            exit = fadeOut(tween(150)) + slideOutVertically(
-                animationSpec = tween(150),
-                targetOffsetY = { -it / 4 }
+        // 添加自定义按钮对话框
+        if (showAddButton) {
+            AddCustomButtonDialog(
+                onDismiss = { showAddButton = false },
+                onAdd = { label, cmd, color ->
+                    viewModel.addCustomButton(label, cmd, color)
+                    showAddButton = false
+                }
             )
-        ) {
+        }
+
+        // 自定义指令对话框
+        if (showCustomCmd) {
             CustomCommandDialog(
                 onSend = { cmd -> viewModel.sendCustomCommand(cmd) },
                 onDismiss = { showCustomCmd = false }
@@ -204,7 +210,10 @@ private fun BoxScope.LayoutWidgets(
     val carState by viewModel.carState.collectAsState()
     val haptic = rememberHaptic()
 
-    val w = { id: String -> layoutConfig.widgets.find { it.id == id } }
+    val w = { id: String -> layoutConfig.widgets.find { it.id == id     }
+}
+
+// ==================== 带动画的按钮组件 ====================
 
     // ---- 移动摇杆 ----
     val moveW = w(WidgetIds.JOYSTICK_MOVE)
@@ -382,9 +391,49 @@ private fun BoxScope.LayoutWidgets(
             )
         }
     }
-}
 
-// ==================== 带动画的按钮组件 ====================
+    // ---- 自定义按钮 ----
+    val customWidgets = layoutConfig.widgets.filter { it.isCustom }
+    for (widget in customWidgets) {
+        DraggableWidget(
+            isEditing = isEditing,
+            offsetX = widget.offsetX,
+            offsetY = widget.offsetY,
+            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(widget.id, dx, dy) },
+            parentSize = parentSize
+        ) {
+            Box {
+                Button(
+                    onClick = { haptic.medium(); viewModel.sendCustomCommand(widget.command.orEmpty()) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(widget.colorHex).copy(alpha = 0.85f)),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.graphicsLayer { scaleX = widget.scale; scaleY = widget.scale }
+                ) {
+                    Text(widget.label.orEmpty(), fontSize = 12.sp, color = Color.White)
+                }
+
+                // 编辑模式下显示删除按钮
+                if (isEditing) {
+                    IconButton(
+                        onClick = { haptic.heavy(); viewModel.removeWidget(widget.id) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(20.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF5350))
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "删除",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun GripperButton(
@@ -451,6 +500,7 @@ private fun Toolbar(
     onResetLayout: () -> Unit,
     onDisconnect: () -> Unit,
     onShowCustomCmd: () -> Unit,
+    onAddCustom: () -> Unit,
     onShowProtocolEditor: () -> Unit
 ) {
     // 连接状态颜色动画
@@ -524,7 +574,7 @@ private fun Toolbar(
                 Icon(Icons.Default.Edit, "协议编辑", tint = Color(0xFFAB47BC))
             }
             IconButton(onClick = { haptic.light(); onShowCustomCmd() }) {
-                Icon(Icons.Default.Add, "自定义命令", tint = Color(0xFF4FC3F7))
+                Icon(Icons.Default.Send, "发指令", tint = Color(0xFF4FC3F7))
             }
             IconButton(onClick = { haptic.tick(); onToggleEdit() }) {
                 Icon(Icons.Default.Settings, "编辑布局", tint = editIconTint)
@@ -537,6 +587,9 @@ private fun Toolbar(
                 exit = shrinkHorizontally(tween(200)) + fadeOut(tween(200))
             ) {
                 Row {
+                    IconButton(onClick = { haptic.light(); onAddCustom() }) {
+                        Icon(Icons.Default.Add, "添加按钮", tint = Color(0xFF66BB6A))
+                    }
                     IconButton(onClick = { haptic.heavy(); onResetLayout() }) {
                         Icon(Icons.Default.Delete, "重置布局", tint = Color(0xFFFFCA28))
                     }

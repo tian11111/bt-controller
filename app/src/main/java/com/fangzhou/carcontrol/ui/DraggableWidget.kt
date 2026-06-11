@@ -9,9 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -23,22 +22,19 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun DraggableWidget(
     isEditing: Boolean,
-    offsetX: Float,       // normalized 0~1
-    offsetY: Float,       // normalized 0~1
+    offsetX: Float,
+    offsetY: Float,
     onOffsetChange: (Float, Float) -> Unit,
     parentSize: IntSize,
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
-    // 拖拽累积像素偏移，用 stable key 不重置
-    var dragPxX by remember { mutableFloatStateOf(0f) }
-    var dragPxY by remember { mutableFloatStateOf(0f) }
+    var dragPxX by remember { mutableStateOf(0f) }
+    var dragPxY by remember { mutableStateOf(0f) }
+    var baseOffX by remember { mutableStateOf(offsetX) }
+    var baseOffY by remember { mutableStateOf(offsetY) }
 
-    // 拖拽开始时的基准 offset 快照
-    var baseOffX by remember { mutableFloatStateOf(offsetX) }
-    var baseOffY by remember { mutableFloatStateOf(offsetY) }
-
-    // 外部 offset 变化时同步基准值并清零拖拽
+    // 外部 offset 更新时同步基准值并清零拖拽增量
     if (offsetX != baseOffX || offsetY != baseOffY) {
         baseOffX = offsetX
         baseOffY = offsetY
@@ -46,15 +42,12 @@ fun DraggableWidget(
         dragPxY = 0f
     }
 
-    val currentOnOffsetChange by rememberUpdatedState(onOffsetChange)
-    val currentParentSize by rememberUpdatedState(parentSize)
-
-    val visualPxX = (baseOffX * parentSize.width + dragPxX).toInt()
-    val visualPxY = (baseOffY * parentSize.height + dragPxY).toInt()
+    val pxX = (baseOffX * parentSize.width + dragPxX).toInt()
+    val pxY = (baseOffY * parentSize.height + dragPxY).toInt()
 
     Box(
         modifier = modifier
-            .offset { IntOffset(visualPxX, visualPxY) }
+            .offset { IntOffset(pxX, pxY) }
             .then(
                 if (isEditing) {
                     Modifier
@@ -62,7 +55,6 @@ fun DraggableWidget(
                         .pointerInput(Unit) {
                             detectDragGestures(
                                 onDragStart = {
-                                    // 开始拖拽时锁定当前基准
                                     baseOffX = offsetX
                                     baseOffY = offsetY
                                     dragPxX = 0f
@@ -74,14 +66,14 @@ fun DraggableWidget(
                                     dragPxY += dragAmount.y
                                 },
                                 onDragEnd = {
-                                    val ps = currentParentSize
-                                    val newOffX = (baseOffX + dragPxX / ps.width)
-                                        .coerceIn(0f, 0.9f)
-                                    val newOffY = (baseOffY + dragPxY / ps.height)
-                                        .coerceIn(0f, 0.9f)
-                                    currentOnOffsetChange(newOffX, newOffY)
-                                    dragPxX = 0f
-                                    dragPxY = 0f
+                                    if (parentSize.width > 0 && parentSize.height > 0) {
+                                        val newOffX = (baseOffX + dragPxX / parentSize.width)
+                                            .coerceIn(0f, 0.9f)
+                                        val newOffY = (baseOffY + dragPxY / parentSize.height)
+                                            .coerceIn(0f, 0.9f)
+                                        onOffsetChange(newOffX, newOffY)
+                                    }
+                                    // 不清零 dragPxX/Y，等外部 offset 更新时自然同步
                                 },
                                 onDragCancel = {
                                     dragPxX = 0f

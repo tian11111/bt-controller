@@ -32,16 +32,19 @@ fun BluetoothControlScreen(
             onRefresh = { viewModel.connectionManager.btManager.refreshPairedDevices() },
             onConnect = { device -> 
                 viewModel.connectionManager.connectBluetooth(device)
-                showBtDialog = false
+                // 不关闭对话框，等连接结果
             },
             onDismiss = { 
                 showBtDialog = false
-                // 只有在未连接状态下点取消才返回模式选择
-                if (connectionState == UnifiedConnectionState.DISCONNECTED) {
-                    onBack()
-                }
             }
         )
+    }
+
+    // 连接成功后自动关闭对话框
+    LaunchedEffect(connectionState) {
+        if (connectionState == UnifiedConnectionState.CONNECTED && showBtDialog) {
+            showBtDialog = false
+        }
     }
 
     // 协议编辑器对话框

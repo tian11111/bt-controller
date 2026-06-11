@@ -220,6 +220,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: WidgetLayout(id = id)
     }
 
+    // ===== 自定义按钮 =====
+
+    fun addCustomButton(label: String, command: String, colorHex: Long) {
+        val current = _layoutConfig.value
+        val id = "custom_${System.currentTimeMillis()}"
+        val newWidget = WidgetLayout(
+            id = id,
+            offsetX = 0.3f,
+            offsetY = 0.5f,
+            isCustom = true,
+            label = label,
+            command = command,
+            colorHex = colorHex
+        )
+        _layoutConfig.value = current.copy(widgets = current.widgets + newWidget)
+    }
+
+    fun removeWidget(id: String) {
+        val current = _layoutConfig.value
+        _layoutConfig.value = current.copy(widgets = current.widgets.filter { it.id != id })
+    }
+
     override fun onCleared() {
         super.onCleared()
         connectionManager.destroy()
