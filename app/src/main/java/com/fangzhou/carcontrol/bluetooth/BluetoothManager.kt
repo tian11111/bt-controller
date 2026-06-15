@@ -251,21 +251,19 @@ class BluetoothManager(private val context: Context) {
                 }
 
                 for (chunk in chunks) {
-                    val success = suspendCancellableCoroutine<Boolean> { cont ->
-                        writeCallback = cont
-                        tx.value = chunk
-                        tx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        Log.d(TAG, "BLE writing ${chunk.size} bytes: ${String(chunk, Charsets.UTF_8).trim()}")
-                        if (!g.writeCharacteristic(tx)) {
-                            Log.e(TAG, "writeCharacteristic returned false")
-                            cont.resume(false)
+                    val success = withTimeoutOrNull(3000L) {
+                        suspendCancellableCoroutine<Boolean> { cont ->
+                            writeCallback = cont
+                            tx.value = chunk
+                            tx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            if (!g.writeCharacteristic(tx)) {
+                                cont.resume(false)
+                            }
                         }
-                    }
+                    } ?: false
                     if (!success) {
-                        Log.w(TAG, "BLE write failed for chunk")
+                        Log.w(TAG, "BLE write failed/timeout for chunk")
                         break
-                    } else {
-                        Log.d(TAG, "writeQueue: chunk sent OK")
                     }
                 }
             }

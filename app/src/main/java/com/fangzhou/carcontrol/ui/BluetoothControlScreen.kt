@@ -11,7 +11,7 @@ fun BluetoothControlScreen(
 ) {
     val connectionState by viewModel.connectionManager.unifiedState.collectAsState()
     val connectionType by viewModel.connectionManager.connectionType.collectAsState()
-    var showBtDialog by remember { mutableStateOf(true) }
+    var showBtDialog by remember { mutableStateOf(false) }
     var showProtocolEditor by remember { mutableStateOf(false) }
 
     // 主控制面板

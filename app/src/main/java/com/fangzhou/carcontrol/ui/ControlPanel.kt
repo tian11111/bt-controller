@@ -87,34 +87,40 @@ fun ControlPanel(
     var showAddButton by remember { mutableStateOf(false) }
     var showCustomCmd by remember { mutableStateOf(false) }
 
-    // 自动发送（变化检测，松手立即停止，推幅=速度）
+    // 自动发送
     LaunchedEffect(connectionState) {
         if (connectionState == UnifiedConnectionState.CONNECTED) {
             var lastCmd = ""
             var lastGx = 0
+            var stopCount = 0
             while (true) {
                 val s = viewModel.carState.value
-                // 线性映射，仅保留极小死区(2)防漂移
                 val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
                 val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
                 val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
                 val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 10) 0 else it }.coerceIn(-300, 300)
 
                 val cmd = "$lx,$ly,$rx"
+                val isCenter = (lx == 0 && ly == 0 && rx == 0)
 
-                // 值变化立即发送
                 if (cmd != lastCmd) {
                     viewModel.sendJoystick(lx, ly, rx, 0)
                     lastCmd = cmd
+                    stopCount = 0
+                } else if (isCenter) {
+                    // 松手后每100ms重复发停机，确保收到
+                    stopCount++
+                    if (stopCount % 5 == 1) { // 每5个周期(100ms)发一次
+                        viewModel.sendJoystick(0, 0, 0, 0)
+                    }
                 }
 
-                // 夹爪：值变化就发送（包括回零）
                 if (gx != lastGx) {
                     viewModel.sendGripper(0, gx)
                     lastGx = gx
                 }
 
-                delay(20)  // 20ms周期，提升响应
+                delay(20)
             }
         }
     }
