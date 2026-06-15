@@ -92,7 +92,7 @@ fun ControlPanel(
         if (connectionState == UnifiedConnectionState.CONNECTED) {
             var lastCmd = ""
             var lastGx = 0
-            var stopCount = 0
+            var wasCenter = true
             while (true) {
                 val s = viewModel.carState.value
                 val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
@@ -106,21 +106,20 @@ fun ControlPanel(
                 if (cmd != lastCmd) {
                     viewModel.sendJoystick(lx, ly, rx, 0)
                     lastCmd = cmd
-                    stopCount = 0
-                } else if (isCenter) {
-                    // 松手后每100ms重复发停机，确保收到
-                    stopCount++
-                    if (stopCount % 5 == 1) { // 每5个周期(100ms)发一次
-                        viewModel.sendJoystick(0, 0, 0, 0)
-                    }
                 }
+
+                // 松手瞬间连发3次停机
+                if (isCenter && !wasCenter) {
+                    repeat(3) { viewModel.sendJoystick(0, 0, 0, 0); delay(20) }
+                }
+                wasCenter = isCenter
 
                 if (gx != lastGx) {
                     viewModel.sendGripper(0, gx)
                     lastGx = gx
                 }
 
-                delay(20)
+                delay(40)
             }
         }
     }

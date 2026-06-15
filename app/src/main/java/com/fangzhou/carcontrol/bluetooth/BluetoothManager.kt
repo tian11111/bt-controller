@@ -255,7 +255,7 @@ class BluetoothManager(private val context: Context) {
                         suspendCancellableCoroutine<Boolean> { cont ->
                             writeCallback = cont
                             tx.value = chunk
-                            tx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            tx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                             if (!g.writeCharacteristic(tx)) {
                                 cont.resume(false)
                             }
