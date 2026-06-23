@@ -90,36 +90,59 @@ fun ControlPanel(
     // 自动发送
     LaunchedEffect(connectionState) {
         if (connectionState == UnifiedConnectionState.CONNECTED) {
-            var lastCmd = ""
+            var lastLx = 0
+            var lastLy = 0
+            var lastRx = 0
             var lastGx = 0
             var wasCenter = true
+            var noChangeCount = 0
+            
             while (true) {
                 val s = viewModel.carState.value
-                val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
-                val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
-                val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 2) 0 else it }.coerceIn(-100, 100)
-                val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 10) 0 else it }.coerceIn(-300, 300)
+                val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
+                val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
+                val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
+                val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 20) 0 else it }.coerceIn(-300, 300)
 
-                val cmd = "$lx,$ly,$rx"
                 val isCenter = (lx == 0 && ly == 0 && rx == 0)
+                val joystickChanged = (lx != lastLx || ly != lastLy || rx != lastRx)
+                val gripperChanged = (gx != lastGx)
 
-                if (cmd != lastCmd) {
+                // 摇杆有变化时发送
+                if (joystickChanged) {
                     viewModel.sendJoystick(lx, ly, rx, 0)
-                    lastCmd = cmd
+                    lastLx = lx
+                    lastLy = ly
+                    lastRx = rx
+                    noChangeCount = 0
                 }
 
                 // 松手瞬间连发3次停机
                 if (isCenter && !wasCenter) {
-                    repeat(3) { viewModel.sendJoystick(0, 0, 0, 0); delay(20) }
+                    repeat(3) { viewModel.sendJoystick(0, 0, 0, 0); delay(15) }
                 }
                 wasCenter = isCenter
 
-                if (gx != lastGx) {
-                    viewModel.sendGripper(0, gx)
+                // 夹爪有变化时发送
+                if (gripperChanged) {
+                    viewModel.sendGripper(gx, gx)
                     lastGx = gx
+                    noChangeCount = 0
+                }
+                
+                // 夹爪归零时连发5次确保停止
+                if (gx == 0 && lastGx != 0) {
+                    repeat(5) { viewModel.sendGripper(0, 0); delay(15) }
+                    lastGx = 0
                 }
 
-                delay(40)
+                // 自适应延迟：有变化时快速响应，无变化时降低频率
+                noChangeCount++
+                if (noChangeCount < 5) {
+                    delay(15)  // 快速响应期：15ms
+                } else {
+                    delay(50)  // 空闲期：50ms，降低功耗
+                }
             }
         }
     }
@@ -269,7 +292,7 @@ private fun BoxScope.LayoutWidgets(
                     value = carState.gripperUpDown,
                     onValueChange = { viewModel.updateGripperUpDown(it) },
                     onValueChangeFinished = { viewModel.updateGripperUpDown(0f) },
-                    modifier = Modifier.height(150.dp).width(50.dp)
+                    modifier = Modifier.height(250.dp).width(80.dp)
                 )
             }
         }
@@ -293,7 +316,7 @@ private fun BoxScope.LayoutWidgets(
                     haptic.medium()
                     val open = !carState.gripperOpen
                     viewModel.setGripperOpen(open)
-                    if (open) { viewModel.setGripperClose(false); viewModel.sendGripper(300, 0) }
+                    if (open) { viewModel.setGripperClose(false); viewModel.sendGripper(300, 300) }
                     else viewModel.sendGripper(0, 0)
                 }
             )
@@ -318,7 +341,7 @@ private fun BoxScope.LayoutWidgets(
                     haptic.medium()
                     val close = !carState.gripperClose
                     viewModel.setGripperClose(close)
-                    if (close) { viewModel.setGripperOpen(false); viewModel.sendGripper(-300, 0) }
+                    if (close) { viewModel.setGripperOpen(false); viewModel.sendGripper(-300, -300) }
                     else viewModel.sendGripper(0, 0)
                 }
             )

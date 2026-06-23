@@ -267,8 +267,21 @@ class ProtocolEngine {
         return "[joystick,$lx,$ly,$rx,$ry]"
     }
 
+    // 短格式摇杆指令 - 优化延迟
+    fun createJoystickShort(lx: Int, ly: Int, rx: Int): String {
+        // 只发送非零值，减少数据量
+        // 格式: J,x,y,r
+        return "J,$lx,$ly,$rx"
+    }
+
     fun createGripper(xSpeed: Int, ySpeed: Int): String {
         return "[gripper,$xSpeed,$ySpeed]"
+    }
+
+    // 短格式夹爪指令 - 优化延迟
+    fun createGripperShort(ySpeed: Int): String {
+        // 格式: G,speed
+        return "G,$ySpeed"
     }
 
     fun createQuery(): String {

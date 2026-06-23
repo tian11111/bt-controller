@@ -120,7 +120,8 @@ class WifiManager(private val context: Context) {
             val os = outputStream ?: return false
             os.write(data)
             os.flush()
-            Log.d(TAG, "WiFi TX: {String(data, Charsets.UTF_8)}")
+            // Log.d 会增加延迟，只在调试时开启
+            // Log.d(TAG, "WiFi TX: ${String(data, Charsets.UTF_8)}")
             true
         } catch (e: IOException) {
             Log.e(TAG, "WiFi send failed", e)

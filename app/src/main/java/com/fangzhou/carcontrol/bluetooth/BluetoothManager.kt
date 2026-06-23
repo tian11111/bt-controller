@@ -339,7 +339,8 @@ class BluetoothManager(private val context: Context) {
     fun sendBytes(data: ByteArray): Boolean {
         return if (isBleConnection) {
             val result = writeChannel.trySend(data)
-            Log.d(TAG, "sendBytes queued: ${data.size} bytes, success=${result.isSuccess}")
+            // Log.d 会增加延迟，只在调试时开启
+            // Log.d(TAG, "sendBytes queued: ${data.size} bytes, success=${result.isSuccess}")
             result.isSuccess
         } else {
             try {
