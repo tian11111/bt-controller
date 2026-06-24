@@ -87,62 +87,68 @@ fun ControlPanel(
     var showAddButton by remember { mutableStateOf(false) }
     var showCustomCmd by remember { mutableStateOf(false) }
 
-    // 自动发送
+    // 自动发送 - 差分压缩算法
     LaunchedEffect(connectionState) {
         if (connectionState == UnifiedConnectionState.CONNECTED) {
-            var lastLx = 0
-            var lastLy = 0
-            var lastRx = 0
-            var lastGx = 0
-            var wasCenter = true
-            var noChangeCount = 0
-            
+            // 算法参数
+            val THRESHOLD_UP = 10       // 上升阈值
+            val THRESHOLD_DOWN = 5      // 下降阈值
+            val DEADBAND = 10           // 死区范围
+            val MAX_INTERVAL = 100L     // 最大发送间隔 (ms)
+            val MIN_INTERVAL = 15L      // 最小发送间隔 (ms)
+
+            // 状态变量
+            var lastSentLx = 0
+            var lastSentLy = 0
+            var lastSentRx = 0
+            var lastSentGx = 0
+            var lastJoystickSendTime = 0L
+            var lastGripperSendTime = 0L
+
             while (true) {
+                val now = System.currentTimeMillis()
                 val s = viewModel.carState.value
+
+                // 读取当前值
                 val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
                 val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
                 val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
                 val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 20) 0 else it }.coerceIn(-300, 300)
 
-                val isCenter = (lx == 0 && ly == 0 && rx == 0)
-                val joystickChanged = (lx != lastLx || ly != lastLy || rx != lastRx)
-                val gripperChanged = (gx != lastGx)
+                // ========== 无刷电机 - 差分压缩 ==========
+                val jDiff = maxOf(
+                    kotlin.math.abs(lx - lastSentLx),
+                    kotlin.math.abs(ly - lastSentLy),
+                    kotlin.math.abs(rx - lastSentRx)
+                )
+                val jIsZero = (lx == 0 && ly == 0 && rx == 0)
+                val jTimeout = (now - lastJoystickSendTime > MAX_INTERVAL)
+                val jCanSend = (now - lastJoystickSendTime > MIN_INTERVAL)
 
-                // 摇杆有变化时发送
-                if (joystickChanged) {
+                // 发送条件：(变化超过阈值 或 归零 或 超时) 且 可发送
+                if (jCanSend && (jDiff > THRESHOLD_UP || jIsZero || jTimeout)) {
                     viewModel.sendJoystick(lx, ly, rx, 0)
-                    lastLx = lx
-                    lastLy = ly
-                    lastRx = rx
-                    noChangeCount = 0
+                    lastSentLx = lx
+                    lastSentLy = ly
+                    lastSentRx = rx
+                    lastJoystickSendTime = now
                 }
 
-                // 松手瞬间连发3次停机
-                if (isCenter && !wasCenter) {
-                    repeat(3) { viewModel.sendJoystick(0, 0, 0, 0); delay(15) }
-                }
-                wasCenter = isCenter
+                // ========== 步进电机 - 差分压缩 ==========
+                val gDiff = kotlin.math.abs(gx - lastSentGx)
+                val gIsZero = (gx == 0)
+                val gTimeout = (now - lastGripperSendTime > MAX_INTERVAL)
+                val gCanSend = (now - lastGripperSendTime > MIN_INTERVAL)
 
-                // 夹爪有变化时发送
-                if (gripperChanged) {
+                // 发送条件：(变化超过阈值 或 归零 或 超时) 且 可发送
+                if (gCanSend && (gDiff > THRESHOLD_UP || gIsZero || gTimeout)) {
                     viewModel.sendGripper(gx, gx)
-                    lastGx = gx
-                    noChangeCount = 0
-                }
-                
-                // 夹爪归零时连发5次确保停止
-                if (gx == 0 && lastGx != 0) {
-                    repeat(5) { viewModel.sendGripper(0, 0); delay(15) }
-                    lastGx = 0
+                    lastSentGx = gx
+                    lastGripperSendTime = now
                 }
 
-                // 自适应延迟：有变化时快速响应，无变化时降低频率
-                noChangeCount++
-                if (noChangeCount < 5) {
-                    delay(15)  // 快速响应期：15ms
-                } else {
-                    delay(50)  // 空闲期：50ms，降低功耗
-                }
+                // 固定检测间隔
+                delay(10)
             }
         }
     }
@@ -213,8 +219,8 @@ private fun VerticalSlider(
             onValueChangeFinished = onValueChangeFinished,
             valueRange = -1f..1f,
             modifier = Modifier
-                .height(40.dp)
-                .width(140.dp)
+                .height(60.dp)
+                .width(200.dp)
                 .graphicsLayer { rotationZ = -90f },
             colors = SliderDefaults.colors(
                 thumbColor = Color(0xFFAB47BC),
