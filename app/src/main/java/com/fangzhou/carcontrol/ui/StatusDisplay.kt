@@ -45,6 +45,7 @@ fun StatusDisplay(
     lastReceived: String,
     logMessages: List<String>,
     connectionLabel: String,
+    valveOn: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
@@ -109,11 +110,19 @@ fun StatusDisplay(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Text(
-                text = connectionLabel,
-                color = statusColor,
-                fontSize = 11.sp
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (valveOn) "电磁阀: 开" else "电磁阀: 关",
+                    color = if (valveOn) Color(0xFF66BB6A) else Color(0xFFEF5350),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(
+                    text = connectionLabel,
+                    color = statusColor,
+                    fontSize = 11.sp
+                )
+            }
         }
 
         // 电机速度 - 颜色随数值变化

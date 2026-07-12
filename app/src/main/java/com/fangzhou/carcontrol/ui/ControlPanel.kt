@@ -335,14 +335,11 @@ private fun BoxScope.LayoutWidgets(
         ) {
             GripperButton(
                 text = "夹爪开",
-                isActive = carState.gripperOpen,
+                isActive = carState.valveOn,
                 activeColor = Color(0xFF66BB6A),
                 onClick = {
                     haptic.medium()
-                    val open = !carState.gripperOpen
-                    viewModel.setGripperOpen(open)
-                    if (open) { viewModel.setGripperClose(false); viewModel.sendGripper(300, 300) }
-                    else viewModel.sendGripper(0, 0)
+                    viewModel.sendValveOn()
                 }
             )
         }
@@ -360,14 +357,11 @@ private fun BoxScope.LayoutWidgets(
         ) {
             GripperButton(
                 text = "夹爪关",
-                isActive = carState.gripperClose,
+                isActive = !carState.valveOn,
                 activeColor = Color(0xFFEF5350),
                 onClick = {
                     haptic.medium()
-                    val close = !carState.gripperClose
-                    viewModel.setGripperClose(close)
-                    if (close) { viewModel.setGripperOpen(false); viewModel.sendGripper(-300, -300) }
-                    else viewModel.sendGripper(0, 0)
+                    viewModel.sendValveOff()
                 }
             )
         }
@@ -432,6 +426,7 @@ private fun BoxScope.LayoutWidgets(
                 motorSpeeds = carState.motorSpeeds,
                 lastReceived = carState.lastReceivedRaw,
                 logMessages = carState.logMessages,
+                valveOn = carState.valveOn,
                 connectionLabel = when (connectionState) {
                             UnifiedConnectionState.CONNECTED -> "已连接"
                             UnifiedConnectionState.CONNECTING -> "连接中..."

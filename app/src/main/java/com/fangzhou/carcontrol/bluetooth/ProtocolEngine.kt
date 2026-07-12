@@ -43,6 +43,13 @@ sealed class ProtocolMessage {
     data class MotorStatus(val speeds: List<Int>) : ProtocolMessage()
     data class PlotData(val data: List<Int>) : ProtocolMessage()
     data class PidConfig(val motorIndex: Int, val kp: Float, val ki: Float, val kd: Float) : ProtocolMessage()
+    data class Valve(
+        val isOn: Boolean = false,
+        val isPulse: Boolean = false,
+        val state: String = "",
+        val pulseMs: Int = 0
+    ) : ProtocolMessage()
+    data class ValveError(val error: String) : ProtocolMessage()
     data class Raw(val command: String, val params: List<String>) : ProtocolMessage()
     data class Text(val content: String) : ProtocolMessage()
 }
@@ -114,6 +121,30 @@ class MotorStatusHandler : ProtocolHandler {
 }
 
 /**
+ * 方舟内置协议 - 电磁阀处理器
+ */
+class ValveHandler : ProtocolHandler {
+    override val command = "valve"
+
+    override fun parse(params: List<String>): ProtocolMessage? {
+        // 阀门状态响应由 ProtocolEngine.parseFrame 直接处理（valve:on / valve:off）
+        return null
+    }
+
+    override fun serialize(message: ProtocolMessage): String? {
+        if (message !is ProtocolMessage.Valve) return null
+        return when (message.state) {
+            "on" -> "[valve,on]\r\n"
+            "off" -> "[valve,off]\r\n"
+            "toggle" -> "[valve,toggle]\r\n"
+            "pulse" -> "[valve,pulse,${message.pulseMs}]\r\n"
+            "query" -> "[valve,query]\r\n"
+            else -> null
+        }
+    }
+}
+
+/**
  * 方舟内置协议 - Plot 数据处理器
  */
 class PlotHandler : ProtocolHandler {
@@ -172,6 +203,7 @@ class ProtocolEngine {
         registerHandler(JoystickHandler())
         registerHandler(GripperHandler())
         registerHandler(MotorStatusHandler())
+        registerHandler(ValveHandler())
         registerHandler(PlotHandler())
         registerHandler(PidHandler())
     }
@@ -208,6 +240,19 @@ class ProtocolEngine {
 
         val command = parts[0].trim().lowercase()
         val params = parts.drop(1)
+
+        // 电磁阀状态响应格式为 valve:on / valve:off / valve:pulse / valve:error,...
+        if (command.startsWith("valve:")) {
+            val state = command.substringAfter("valve:")
+            return ProtocolMessage.Valve(
+                isOn = state == "on",
+                isPulse = state == "pulse",
+                state = state
+            )
+        }
+        if (command == "valve:error") {
+            return ProtocolMessage.ValveError(params.joinToString(","))
+        }
 
         val handler = handlers[command]
         return handler?.parse(params) ?: ProtocolMessage.Raw(command, params)
@@ -282,6 +327,26 @@ class ProtocolEngine {
     fun createGripperShort(ySpeed: Int): String {
         // 格式: G,speed
         return "G,$ySpeed"
+    }
+
+    fun createValveOn(): String {
+        return "[valve,on]\r\n"
+    }
+
+    fun createValveOff(): String {
+        return "[valve,off]\r\n"
+    }
+
+    fun createValveToggle(): String {
+        return "[valve,toggle]\r\n"
+    }
+
+    fun createValvePulse(ms: Int): String {
+        return "[valve,pulse,$ms]\r\n"
+    }
+
+    fun createValveQuery(): String {
+        return "[valve,query]\r\n"
     }
 
     fun createQuery(): String {
