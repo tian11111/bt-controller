@@ -67,7 +67,7 @@ class JoystickHandler : ProtocolHandler {
 
     override fun serialize(message: ProtocolMessage): String? {
         if (message !is ProtocolMessage.Joystick) return null
-        return "[joystick,${message.lx},${message.ly},${message.rx},${message.ry}]"
+        return "[joystick,${message.lx},${message.ly},${message.rx},${message.ry}]\r\n"
     }
 }
 
@@ -89,7 +89,7 @@ class GripperHandler : ProtocolHandler {
 
     override fun serialize(message: ProtocolMessage): String? {
         if (message !is ProtocolMessage.Gripper) return null
-        return "[gripper,${message.xSpeed},${message.ySpeed}]"
+        return "[gripper,${message.xSpeed},${message.ySpeed}]\r\n"
     }
 }
 
@@ -109,7 +109,7 @@ class MotorStatusHandler : ProtocolHandler {
     override fun serialize(message: ProtocolMessage): String? {
         if (message !is ProtocolMessage.MotorStatus) return null
         val speeds = message.speeds.joinToString(",")
-        return "[s,$speeds]"
+        return "[s,$speeds]\r\n"
     }
 }
 
@@ -129,7 +129,7 @@ class PlotHandler : ProtocolHandler {
     override fun serialize(message: ProtocolMessage): String? {
         if (message !is ProtocolMessage.PlotData) return null
         val data = message.data.joinToString(",")
-        return "[p,$data]"
+        return "[p,$data]\r\n"
     }
 }
 
@@ -156,7 +156,7 @@ class PidHandler : ProtocolHandler {
         val kp = (message.kp * 100).toInt()
         val ki = (message.ki * 100).toInt()
         val kd = (message.kd * 100).toInt()
-        return "[pid,${message.motorIndex},$kp,$ki,$kd]"
+        return "[pid,${message.motorIndex},$kp,$ki,$kd]\r\n"
     }
 }
 
@@ -254,9 +254,9 @@ class ProtocolEngine {
         return when (message) {
             is ProtocolMessage.Raw -> {
                 val params = if (message.params.isNotEmpty()) ",${message.params.joinToString(",")}" else ""
-                "[${message.command}$params]"
+                "[${message.command}$params]\r\n"
             }
-            is ProtocolMessage.Text -> message.content
+            is ProtocolMessage.Text -> if (message.content.endsWith("\r\n")) message.content else "${message.content}\r\n"
             else -> null
         }
     }
@@ -264,7 +264,7 @@ class ProtocolEngine {
     // ===== 便捷发送方法 =====
 
     fun createJoystick(lx: Int, ly: Int, rx: Int = 0, ry: Int = 0): String {
-        return "[joystick,$lx,$ly,$rx,$ry]"
+        return "[joystick,$lx,$ly,$rx,$ry]\r\n"
     }
 
     // 短格式摇杆指令 - 优化延迟
@@ -275,7 +275,7 @@ class ProtocolEngine {
     }
 
     fun createGripper(xSpeed: Int, ySpeed: Int): String {
-        return "[gripper,$xSpeed,$ySpeed]"
+        return "[gripper,$xSpeed,$ySpeed]\r\n"
     }
 
     // 短格式夹爪指令 - 优化延迟
@@ -285,26 +285,26 @@ class ProtocolEngine {
     }
 
     fun createQuery(): String {
-        return "[query]"
+        return "[query]\r\n"
     }
 
     fun createPlot(): String {
-        return "[plot]"
+        return "[plot]\r\n"
     }
 
     fun createAutoStart(): String {
-        return "[auto]"
+        return "[auto]\r\n"
     }
 
     fun createAutoStop(): String {
-        return "[stop]"
+        return "[stop]\r\n"
     }
 
     fun createPid(motorIndex: Int, kp: Float, ki: Float, kd: Float): String {
         val kpi = (kp * 100).toInt()
         val kii = (ki * 100).toInt()
         val kdi = (kd * 100).toInt()
-        return "[pid,$motorIndex,$kpi,$kii,$kdi]"
+        return "[pid,$motorIndex,$kpi,$kii,$kdi]\r\n"
     }
 
     /**
@@ -312,6 +312,6 @@ class ProtocolEngine {
      */
     fun createCustom(command: String, vararg params: Any): String {
         val paramStr = if (params.isNotEmpty()) ",${params.joinToString(",")}" else ""
-        return "[$command$paramStr]"
+        return "[$command$paramStr]\r\n"
     }
 }

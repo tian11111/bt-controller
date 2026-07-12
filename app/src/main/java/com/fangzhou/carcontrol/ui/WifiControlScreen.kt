@@ -24,10 +24,14 @@ fun WifiControlScreen(
         onShowProtocolEditor = { showProtocolEditor = true }
     )
 
+    val initialConfig = remember { viewModel.loadLastWifiConfig() }
+
     // WiFi 连接对话框
     if (showWifiDialog) {
         WifiConnectionDialog(
+            initialConfig = initialConfig,
             onConnect = { config -> 
+                viewModel.saveLastWifiConfig(config)
                 viewModel.connectionManager.connectWifi(config)
                 showWifiDialog = false
             },

@@ -5,6 +5,7 @@ import android.bluetooth.BluetoothDevice
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.fangzhou.carcontrol.connection.ConnectionManager
+import com.fangzhou.carcontrol.connection.ConnectionPreferences
 import com.fangzhou.carcontrol.connection.ConnectionType
 import com.fangzhou.carcontrol.bluetooth.ProtocolCommandStore
 import com.fangzhou.carcontrol.bluetooth.ProtocolEngine
@@ -36,6 +37,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val protocolEngine = ProtocolEngine()
     val protocolStore = ProtocolCommandStore(application)
     private val layoutPrefs = LayoutPreferences(application)
+    private val connectionPrefs = ConnectionPreferences(application)
 
     private val _carState = MutableStateFlow(CarState())
     val carState: StateFlow<CarState> = _carState.asStateFlow()
@@ -60,13 +62,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectBluetooth(device: BluetoothDevice) {
         connectionManager.connectBluetooth(device)
-        addLog("连接蓝牙: {device.name}")
+        addLog("连接蓝牙: ${device.name ?: "unknown"}")
     }
 
     fun connectWifi(config: WifiConfig) {
         connectionManager.connectWifi(config)
-        addLog("连接WiFi: {config.ip}:{config.port}")
+        addLog("连接WiFi: ${config.ip}:${config.port} @ ${config.baudRate} baud")
     }
+
+    fun loadLastWifiConfig(): WifiConfig = connectionPrefs.loadWifiConfig()
+    fun saveLastWifiConfig(config: WifiConfig) = connectionPrefs.saveWifiConfig(config)
 
     fun disconnect() {
         connectionManager.disconnect()
@@ -92,11 +97,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 is ProtocolMessage.Raw -> {
-                    addLog("RX: {msg.command} {msg.params}")
+                    addLog("RX: ${msg.command} ${msg.params}")
                     _carState.value = state.copy(lastReceivedRaw = raw.trim())
                 }
                 is ProtocolMessage.Text -> {
-                    addLog("RX: {msg.content}")
+                    addLog("RX: ${msg.content}")
                 }
                 else -> {
                     _carState.value = state.copy(lastReceivedRaw = raw.trim())
@@ -105,7 +110,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         if (messages.isEmpty() && raw.isNotBlank()) {
-            addLog("RX: {raw.trim()}")
+            addLog("RX: ${raw.trim()}")
             _carState.value = state.copy(lastReceivedRaw = raw.trim())
         }
     }
@@ -138,8 +143,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendCustomCommand(command: String) {
-        connectionManager.send(command)
-        addLog("TX: command")
+        val normalized = if (command.endsWith("\r\n")) command else "$command\r\n"
+        connectionManager.send(normalized)
+        addLog("TX: $command")
     }
 
     fun updateMoveJoystick(x: Float, y: Float) {
@@ -165,7 +171,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun addLog(msg: String) {
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
             .format(java.util.Date())
-        logBuffer.addLast("[timestamp] msg")
+        logBuffer.addLast("[$timestamp] $msg")
         if (logBuffer.size > 100) logBuffer.removeFirst()
         _carState.value = _carState.value.copy(logMessages = logBuffer.toList())
     }

@@ -17,6 +17,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -63,7 +64,19 @@ class BluetoothManager(private val context: Context) {
     private var isBleConnection = false
 
     // BLE 写入队列：必须等 onCharacteristicWrite 回调后才能写下一条
-    private val writeChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    // 使用 DROP_OLDEST 防止旧指令堆积导致延迟
+    private val writeChannel = Channel<ByteArray>(
+        Channel.BUFFERED,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+
+    // 经典蓝牙发送队列：避免在主线程直接写 OutputStream
+    private val classicSendChannel = Channel<ByteArray>(
+        Channel.BUFFERED,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    private var classicSendJob: Job? = null
+
     private var writeCallback: CancellableContinuation<Boolean>? = null
     private var writeJob: Job? = null
 
@@ -128,6 +141,8 @@ class BluetoothManager(private val context: Context) {
                 inputStream = sock.inputStream
                 outputStream = sock.outputStream
                 _connectionState.value = ConnectionState.CONNECTED
+                startClassicSendLoop()
+                startClassicReadLoop()
             } else {
                 connectBle(device)
             }
@@ -255,7 +270,11 @@ class BluetoothManager(private val context: Context) {
                         suspendCancellableCoroutine<Boolean> { cont ->
                             writeCallback = cont
                             tx.value = chunk
-                            tx.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            tx.writeType = if (tx.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
+                                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                            } else {
+                                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            }
                             if (!g.writeCharacteristic(tx)) {
                                 cont.resume(false)
                             }
@@ -265,6 +284,51 @@ class BluetoothManager(private val context: Context) {
                         Log.w(TAG, "BLE write failed/timeout for chunk")
                         break
                     }
+                }
+            }
+        }
+    }
+
+    private fun startClassicSendLoop() {
+        classicSendJob?.cancel()
+        classicSendJob = scope.launch {
+            for (data in classicSendChannel) {
+                try {
+                    outputStream?.write(data)
+                    outputStream?.flush()
+                } catch (e: IOException) {
+                    Log.e(TAG, "Classic send queue error", e)
+                    break
+                }
+            }
+        }
+    }
+
+    private fun startClassicReadLoop() {
+        readJob?.cancel()
+        readJob = scope.launch {
+            val buffer = ByteArray(1024)
+            try {
+                val input = inputStream ?: return@launch
+                while (isActive) {
+                    val count = input.read(buffer)
+                    if (count > 0) {
+                        val text = String(buffer, 0, count, Charsets.UTF_8)
+                        Log.d(TAG, "Classic RX: $text")
+                        _receivedData.emit(text)
+                    } else if (count < 0) {
+                        Log.w(TAG, "Classic stream closed")
+                        break
+                    }
+                }
+            } catch (e: IOException) {
+                if (isActive) {
+                    Log.e(TAG, "Classic read error", e)
+                }
+            } finally {
+                if (isActive) {
+                    _connectionState.value = ConnectionState.DISCONNECTED
+                    cleanup()
                 }
             }
         }
@@ -338,17 +402,9 @@ class BluetoothManager(private val context: Context) {
 
     fun sendBytes(data: ByteArray): Boolean {
         return if (isBleConnection) {
-            val result = writeChannel.trySend(data)
-            // Log.d 会增加延迟，只在调试时开启
-            // Log.d(TAG, "sendBytes queued: ${data.size} bytes, success=${result.isSuccess}")
-            result.isSuccess
+            writeChannel.trySend(data).isSuccess
         } else {
-            try {
-                val os = outputStream ?: return false
-                os.write(data); os.flush(); true
-            } catch (e: IOException) {
-                Log.e(TAG, "Classic send failed", e); false
-            }
+            classicSendChannel.trySend(data).isSuccess
         }
     }
 
@@ -357,7 +413,9 @@ class BluetoothManager(private val context: Context) {
     fun disconnect() {
         readJob?.cancel()
         writeJob?.cancel()
-        writeChannel.tryReceive() // drain
+        classicSendJob?.cancel()
+        while (writeChannel.tryReceive().isSuccess) { /* drain */ }
+        while (classicSendChannel.tryReceive().isSuccess) { /* drain */ }
         cleanup()
         _connectionState.value = ConnectionState.DISCONNECTED
     }

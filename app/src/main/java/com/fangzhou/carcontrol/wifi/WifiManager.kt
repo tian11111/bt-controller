@@ -3,6 +3,7 @@ package com.fangzhou.carcontrol.wifi
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +23,8 @@ enum class WifiConnectionState {
 
 data class WifiConfig(
     val ip: String = "192.168.4.1",
-    val port: Int = 8080
+    val port: Int = 8080,
+    val baudRate: Int = 9600
 )
 
 class WifiManager(private val context: Context) {
@@ -40,6 +42,13 @@ class WifiManager(private val context: Context) {
     private var readJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    // TCP 发送队列：在主线程调用 send 时不会直接阻塞 I/O，DROP_OLDEST 防止旧指令堆积
+    private val sendChannel = Channel<ByteArray>(
+        Channel.BUFFERED,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
+    private var sendJob: Job? = null
+
     private val _connectionState = MutableStateFlow(WifiConnectionState.DISCONNECTED)
     val connectionState: StateFlow<WifiConnectionState> = _connectionState.asStateFlow()
 
@@ -54,7 +63,7 @@ class WifiManager(private val context: Context) {
         
         disconnect()
         _connectionState.value = WifiConnectionState.CONNECTING
-        Log.i(TAG, "Connecting to TCP {config.ip}:{config.port}")
+        Log.i(TAG, "Connecting to TCP ${config.ip}:${config.port}, baudRate=${config.baudRate}")
 
         scope.launch {
             try {
@@ -71,9 +80,10 @@ class WifiManager(private val context: Context) {
                 outputStream = sock.getOutputStream()
 
                 _connectionState.value = WifiConnectionState.CONNECTED
-                Log.i(TAG, "WiFi TCP connected")
+                Log.i(TAG, "WiFi TCP connected, baudRate=${config.baudRate}")
 
                 startReading()
+                startSending()
 
             } catch (e: IOException) {
                 Log.e(TAG, "WiFi connect failed", e)
@@ -93,7 +103,7 @@ class WifiManager(private val context: Context) {
                     val count = input.read(buffer)
                     if (count > 0) {
                         val data = String(buffer, 0, count, Charsets.UTF_8)
-                        Log.d(TAG, "WiFi RX: data")
+                        Log.d(TAG, "WiFi RX: $data")
                         _receivedData.emit(data)
                     } else if (count < 0) {
                         Log.w(TAG, "WiFi stream closed")
@@ -116,21 +126,28 @@ class WifiManager(private val context: Context) {
     fun send(data: String): Boolean = sendBytes(data.toByteArray(Charsets.UTF_8))
 
     fun sendBytes(data: ByteArray): Boolean {
-        return try {
-            val os = outputStream ?: return false
-            os.write(data)
-            os.flush()
-            // Log.d 会增加延迟，只在调试时开启
-            // Log.d(TAG, "WiFi TX: ${String(data, Charsets.UTF_8)}")
-            true
-        } catch (e: IOException) {
-            Log.e(TAG, "WiFi send failed", e)
-            false
+        return sendChannel.trySend(data).isSuccess
+    }
+
+    private fun startSending() {
+        sendJob?.cancel()
+        sendJob = scope.launch {
+            for (data in sendChannel) {
+                try {
+                    outputStream?.write(data)
+                    outputStream?.flush()
+                } catch (e: IOException) {
+                    Log.e(TAG, "WiFi send queue error", e)
+                    break
+                }
+            }
         }
     }
 
     fun disconnect() {
         readJob?.cancel()
+        sendJob?.cancel()
+        while (sendChannel.tryReceive().isSuccess) { /* 清空待发送队列 */ }
         cleanup()
         _connectionState.value = WifiConnectionState.DISCONNECTED
     }

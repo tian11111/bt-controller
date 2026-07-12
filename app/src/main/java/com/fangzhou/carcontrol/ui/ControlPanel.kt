@@ -91,11 +91,10 @@ fun ControlPanel(
     LaunchedEffect(connectionState) {
         if (connectionState == UnifiedConnectionState.CONNECTED) {
             // 算法参数
-            val THRESHOLD_UP = 10       // 上升阈值
-            val THRESHOLD_DOWN = 5      // 下降阈值
-            val DEADBAND = 10           // 死区范围
-            val MAX_INTERVAL = 100L     // 最大发送间隔 (ms)
-            val MIN_INTERVAL = 15L      // 最小发送间隔 (ms)
+            val THRESHOLD_UP = 10       // 值变化阈值
+            val MAX_INTERVAL = 100L     // 摇杆未归零时的保活间隔 (ms)
+            // 不要按触摸事件频率发送。BLE 写入需要等待回调，过快会在写队列中积压旧指令。
+            val MIN_INTERVAL = 35L      // 最高约 28 Hz，兼顾响应与串口/BLE 带宽
 
             // 状态变量
             var lastSentLx = 0
@@ -104,6 +103,8 @@ fun ControlPanel(
             var lastSentGx = 0
             var lastJoystickSendTime = 0L
             var lastGripperSendTime = 0L
+            var joystickStopRepeat = 0   // 摇杆松手后补发停止帧次数
+            var gripperStopRepeat = 0
 
             while (true) {
                 val now = System.currentTimeMillis()
@@ -122,29 +123,47 @@ fun ControlPanel(
                     kotlin.math.abs(rx - lastSentRx)
                 )
                 val jIsZero = (lx == 0 && ly == 0 && rx == 0)
-                val jTimeout = (now - lastJoystickSendTime > MAX_INTERVAL)
-                val jCanSend = (now - lastJoystickSendTime > MIN_INTERVAL)
+                val lastJoystickWasZero = (lastSentLx == 0 && lastSentLy == 0 && lastSentRx == 0)
+                val jStopped = jIsZero && !lastJoystickWasZero
+                val jTimeout = !jIsZero && (now - lastJoystickSendTime >= MAX_INTERVAL)
+                val jCanSend = (now - lastJoystickSendTime >= MIN_INTERVAL)
 
-                // 发送条件：(变化超过阈值 或 归零 或 超时) 且 可发送
-                if (jCanSend && (jDiff > THRESHOLD_UP || jIsZero || jTimeout)) {
+                // 只在值明显变化、非零保活、由运动变为停止或长时间空闲保活时发送。
+                // 松手瞬间启动多次补发，解决 BLE/无线丢包导致小车“停不下来”的问题。
+                val IDLE_KEEPALIVE_INTERVAL = 500L
+                val jIdleTimeout = jIsZero && (now - lastJoystickSendTime >= IDLE_KEEPALIVE_INTERVAL)
+                val jShouldSend = jStopped ||
+                    (jCanSend && joystickStopRepeat > 0 && jIsZero) ||
+                    (jCanSend && (jDiff > THRESHOLD_UP || jTimeout || jIdleTimeout))
+
+                if (jShouldSend) {
                     viewModel.sendJoystick(lx, ly, rx, 0)
                     lastSentLx = lx
                     lastSentLy = ly
                     lastSentRx = rx
                     lastJoystickSendTime = now
+                    if (jStopped) joystickStopRepeat = 4
+                    else if (joystickStopRepeat > 0) joystickStopRepeat--
                 }
 
                 // ========== 步进电机 - 差分压缩 ==========
                 val gDiff = kotlin.math.abs(gx - lastSentGx)
-                val gIsZero = (gx == 0)
-                val gTimeout = (now - lastGripperSendTime > MAX_INTERVAL)
-                val gCanSend = (now - lastGripperSendTime > MIN_INTERVAL)
+                val gStopped = (gx == 0 && lastSentGx != 0)
+                val gTimeout = (gx != 0 && now - lastGripperSendTime >= MAX_INTERVAL)
+                val gCanSend = (now - lastGripperSendTime >= MIN_INTERVAL)
 
-                // 发送条件：(变化超过阈值 或 归零 或 超时) 且 可发送
-                if (gCanSend && (gDiff > THRESHOLD_UP || gIsZero || gTimeout)) {
+                // 夹爪松手后也启动多次补发，避免单包丢失导致夹爪停不下来。
+                val gIdleTimeout = (gx == 0) && (now - lastGripperSendTime >= IDLE_KEEPALIVE_INTERVAL)
+                val gShouldSend = gStopped ||
+                    (gCanSend && gripperStopRepeat > 0 && gx == 0) ||
+                    (gCanSend && (gDiff > THRESHOLD_UP || gTimeout || gIdleTimeout))
+
+                if (gShouldSend) {
                     viewModel.sendGripper(gx, gx)
                     lastSentGx = gx
                     lastGripperSendTime = now
+                    if (gStopped) gripperStopRepeat = 4
+                    else if (gripperStopRepeat > 0) gripperStopRepeat--
                 }
 
                 // 固定检测间隔

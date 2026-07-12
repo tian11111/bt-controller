@@ -11,10 +11,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 
 enum class ConnectionType {
@@ -30,7 +32,7 @@ class ConnectionManager(private val context: Context) {
     val btManager = BluetoothManager(context)
     val wifiManager = WifiManager(context)
 
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val _connectionType = MutableStateFlow(ConnectionType.NONE)
     val connectionType: StateFlow<ConnectionType> = _connectionType.asStateFlow()
@@ -38,14 +40,18 @@ class ConnectionManager(private val context: Context) {
     private val _unifiedState = MutableStateFlow(UnifiedConnectionState.DISCONNECTED)
     val unifiedState: StateFlow<UnifiedConnectionState> = _unifiedState.asStateFlow()
 
-    val receivedData: SharedFlow<String>
-        get() = when (_connectionType.value) {
-            ConnectionType.BLUETOOTH -> btManager.receivedData
-            ConnectionType.WIFI -> wifiManager.receivedData
-            ConnectionType.NONE -> btManager.receivedData // fallback
-        }
+    private val _receivedData = MutableSharedFlow<String>(extraBufferCapacity = 64)
+    val receivedData: SharedFlow<String> = _receivedData.asSharedFlow()
 
     init {
+        // 统一转发两个传输层的数据流，解决切换蓝牙/WiFi后 UI 收不到数据的问题
+        scope.launch {
+            btManager.receivedData.collect { _receivedData.emit(it) }
+        }
+        scope.launch {
+            wifiManager.receivedData.collect { _receivedData.emit(it) }
+        }
+
         // 监听蓝牙状态变化
         scope.launch {
             btManager.connectionState.collect { btState ->

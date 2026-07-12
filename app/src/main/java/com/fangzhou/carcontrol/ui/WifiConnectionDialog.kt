@@ -6,6 +6,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -17,11 +18,14 @@ import com.fangzhou.carcontrol.wifi.WifiConfig
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WifiConnectionDialog(
+    initialConfig: WifiConfig = WifiConfig(),
     onConnect: (WifiConfig) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var ipAddress by remember { mutableStateOf("192.168.4.1") }
-    var port by remember { mutableStateOf("8080") }
+    var ipAddress by remember { mutableStateOf(initialConfig.ip) }
+    var port by remember { mutableStateOf(initialConfig.port.toString()) }
+    var baudRate by remember { mutableStateOf(initialConfig.baudRate) }
+    var expanded by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
@@ -121,6 +125,49 @@ fun WifiConnectionDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                // 串口波特率（仅记录/提示，App 不会自动修改 DT-06 配置）
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    ExposedDropdownMenuBox(
+                        expanded = expanded,
+                        onExpandedChange = { expanded = !expanded }
+                    ) {
+                        OutlinedTextField(
+                            value = "$baudRate",
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("串口波特率", color = Color.Gray) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color(0xFF2196F3),
+                                unfocusedBorderColor = Color.Gray
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = expanded,
+                            onDismissRequest = { expanded = false },
+                            containerColor = Color(0xFF2E2E2E)
+                        ) {
+                            listOf(9600, 19200, 38400, 57600, 115200, 230400, 460800).forEach { rate ->
+                                DropdownMenuItem(
+                                    text = { Text("$rate", color = Color.White) },
+                                    onClick = { baudRate = rate; expanded = false }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = "提示：需与 DT-06 / 下位机串口波特率一致。App 不会自动改写模块配置。",
+                    color = Color.Gray,
+                    fontSize = 11.sp
+                )
+
                 Divider(color = Color.Gray.copy(alpha = 0.3f))
 
                 // 操作按钮
@@ -141,7 +188,7 @@ fun WifiConnectionDialog(
                     Button(
                         onClick = {
                             val portNum = port.toIntOrNull() ?: 8080
-                            onConnect(WifiConfig(ipAddress, portNum))
+                            onConnect(WifiConfig(ipAddress, portNum, baudRate))
                             onDismiss()
                         },
                         modifier = Modifier.weight(1f),
