@@ -29,7 +29,8 @@ data class CarState(
     val gripperUpDown: Float = 0f,  // -1 ~ 1
     val gripperOpen: Boolean = false,
     val gripperClose: Boolean = false,
-    val valveOn: Boolean = false   // 电磁阀状态（控制夹爪开合）
+    val valveOn: Boolean = false,  // 电磁阀1状态（夹爪开闭）
+    val valve2On: Boolean = false   // 电磁阀2状态（夹爪伸缩）
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -98,11 +99,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 is ProtocolMessage.Valve -> {
-                    addLog("RX: valve=${msg.state}")
-                    _carState.value = state.copy(
-                        valveOn = msg.isOn,
-                        lastReceivedRaw = raw.trim()
-                    )
+                    addLog("RX: ${msg.valveIndex}=${msg.state}")
+                    if (msg.valveIndex == "valve2") {
+                        _carState.value = state.copy(
+                            valve2On = msg.isOn,
+                            lastReceivedRaw = raw.trim()
+                        )
+                    } else {
+                        _carState.value = state.copy(
+                            valveOn = msg.isOn,
+                            lastReceivedRaw = raw.trim()
+                        )
+                    }
                 }
                 is ProtocolMessage.ValveError -> {
                     addLog("RX: valve error ${msg.error}")
@@ -139,11 +147,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ===== 电磁阀（夹爪开合） =====
     fun sendValveOn() {
-        connectionManager.send(protocolEngine.createValveOn())
+        connectionManager.send(protocolEngine.createValve1On())
     }
 
     fun sendValveOff() {
-        connectionManager.send(protocolEngine.createValveOff())
+        connectionManager.send(protocolEngine.createValve1Off())
+    }
+
+    // ===== 电磁阀2（夹爪伸缩） =====
+    fun sendValve2On() {
+        connectionManager.send(protocolEngine.createValve2On())
+    }
+
+    fun sendValve2Off() {
+        connectionManager.send(protocolEngine.createValve2Off())
     }
 
     fun sendValveToggle() {
@@ -160,6 +177,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setValveOn(on: Boolean) {
         _carState.value = _carState.value.copy(valveOn = on)
+    }
+
+    fun setValve2On(on: Boolean) {
+        _carState.value = _carState.value.copy(valve2On = on)
     }
 
     fun sendQuery() {

@@ -28,6 +28,8 @@ object WidgetIds {
     const val SLIDER_GRIPPER_UPDOWN = "slider_gripper_updown"
     const val BUTTON_GRIPPER_OPEN = "button_gripper_open"
     const val BUTTON_GRIPPER_CLOSE = "button_gripper_close"
+    const val BUTTON_VALVE2_OPEN = "button_valve2_open"
+    const val BUTTON_VALVE2_CLOSE = "button_valve2_close"
     const val BUTTON_QUERY = "button_query"
     const val BUTTON_AUTO_PLOT = "button_auto_plot"
     const val BUTTON_STOP = "button_stop"
@@ -39,6 +41,8 @@ object WidgetIds {
         SLIDER_GRIPPER_UPDOWN,
         BUTTON_GRIPPER_OPEN,
         BUTTON_GRIPPER_CLOSE,
+        BUTTON_VALVE2_OPEN,
+        BUTTON_VALVE2_CLOSE,
         BUTTON_QUERY,
         BUTTON_AUTO_PLOT,
         BUTTON_STOP,
@@ -82,6 +86,8 @@ class LayoutPreferences(context: Context) {
             WidgetIds.SLIDER_GRIPPER_UPDOWN to (0.35f to 0.30f),
             WidgetIds.BUTTON_GRIPPER_OPEN to (0.33f to 0.68f),
             WidgetIds.BUTTON_GRIPPER_CLOSE to (0.42f to 0.68f),
+            WidgetIds.BUTTON_VALVE2_OPEN to (0.51f to 0.68f),
+            WidgetIds.BUTTON_VALVE2_CLOSE to (0.60f to 0.68f),
             WidgetIds.BUTTON_QUERY to (0.33f to 0.80f),
             WidgetIds.BUTTON_AUTO_PLOT to (0.42f to 0.80f),
             WidgetIds.BUTTON_STOP to (0.51f to 0.80f),

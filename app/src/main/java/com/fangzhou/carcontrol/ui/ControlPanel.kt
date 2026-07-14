@@ -367,6 +367,50 @@ private fun BoxScope.LayoutWidgets(
         }
     }
 
+    // ---- 伸缩出 ----
+    val v2openW = w(WidgetIds.BUTTON_VALVE2_OPEN)
+    if (v2openW?.visible != false) {
+        DraggableWidget(
+            isEditing = isEditing,
+            offsetX = v2openW?.offsetX ?: 0.51f,
+            offsetY = v2openW?.offsetY ?: 0.68f,
+            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_VALVE2_OPEN, dx, dy) },
+            parentSize = parentSize
+        ) {
+            GripperButton(
+                text = "伸缩出",
+                isActive = carState.valve2On,
+                activeColor = Color(0xFF26A69A),
+                onClick = {
+                    haptic.medium()
+                    viewModel.sendValve2On()
+                }
+            )
+        }
+    }
+
+    // ---- 伸缩缩 ----
+    val v2closeW = w(WidgetIds.BUTTON_VALVE2_CLOSE)
+    if (v2closeW?.visible != false) {
+        DraggableWidget(
+            isEditing = isEditing,
+            offsetX = v2closeW?.offsetX ?: 0.60f,
+            offsetY = v2closeW?.offsetY ?: 0.68f,
+            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_VALVE2_CLOSE, dx, dy) },
+            parentSize = parentSize
+        ) {
+            GripperButton(
+                text = "伸缩缩",
+                isActive = !carState.valve2On,
+                activeColor = Color(0xFFFF7043),
+                onClick = {
+                    haptic.medium()
+                    viewModel.sendValve2Off()
+                }
+            )
+        }
+    }
+
     // ---- 查询 ----
     val queryW = w(WidgetIds.BUTTON_QUERY)
     if (queryW?.visible != false) {

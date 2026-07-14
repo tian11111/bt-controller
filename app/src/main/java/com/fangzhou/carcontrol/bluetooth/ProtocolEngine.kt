@@ -47,7 +47,8 @@ sealed class ProtocolMessage {
         val isOn: Boolean = false,
         val isPulse: Boolean = false,
         val state: String = "",
-        val pulseMs: Int = 0
+        val pulseMs: Int = 0,
+        val valveIndex: String = "valve1"
     ) : ProtocolMessage()
     data class ValveError(val error: String) : ProtocolMessage()
     data class Raw(val command: String, val params: List<String>) : ProtocolMessage()
@@ -127,18 +128,19 @@ class ValveHandler : ProtocolHandler {
     override val command = "valve"
 
     override fun parse(params: List<String>): ProtocolMessage? {
-        // 阀门状态响应由 ProtocolEngine.parseFrame 直接处理（valve:on / valve:off）
         return null
     }
 
     override fun serialize(message: ProtocolMessage): String? {
         if (message !is ProtocolMessage.Valve) return null
+        // 支持 valve1 和 valve2，通过 state 前缀区分
+        val prefix = message.valveIndex
         return when (message.state) {
-            "on" -> "[valve,on]\r\n"
-            "off" -> "[valve,off]\r\n"
-            "toggle" -> "[valve,toggle]\r\n"
-            "pulse" -> "[valve,pulse,${message.pulseMs}]\r\n"
-            "query" -> "[valve,query]\r\n"
+            "on" -> "[$prefix,on]\r\n"
+            "off" -> "[$prefix,off]\r\n"
+            "toggle" -> "[$prefix,toggle]\r\n"
+            "pulse" -> "[$prefix,pulse,${message.pulseMs}]\r\n"
+            "query" -> "[$prefix,query]\r\n"
             else -> null
         }
     }
@@ -241,16 +243,28 @@ class ProtocolEngine {
         val command = parts[0].trim().lowercase()
         val params = parts.drop(1)
 
-        // 电磁阀状态响应格式为 valve:on / valve:off / valve:pulse / valve:error,...
+        // 电磁阀状态响应格式为 valve1:on / valve1:off / valve2:on / valve2:off 等
+        if (command.startsWith("valve1:") || command.startsWith("valve2:")) {
+            val prefix = if (command.startsWith("valve1:")) "valve1" else "valve2"
+            val state = command.substringAfter("${prefix}:")
+            return ProtocolMessage.Valve(
+                isOn = state == "on",
+                isPulse = state == "pulse",
+                state = state,
+                valveIndex = prefix
+            )
+        }
+        // 兼容旧格式 valve:on / valve:off
         if (command.startsWith("valve:")) {
             val state = command.substringAfter("valve:")
             return ProtocolMessage.Valve(
                 isOn = state == "on",
                 isPulse = state == "pulse",
-                state = state
+                state = state,
+                valveIndex = "valve1"
             )
         }
-        if (command == "valve:error") {
+        if (command.startsWith("valve1:error") || command.startsWith("valve2:error") || command == "valve:error") {
             return ProtocolMessage.ValveError(params.joinToString(","))
         }
 
@@ -329,25 +343,20 @@ class ProtocolEngine {
         return "G,$ySpeed"
     }
 
-    fun createValveOn(): String {
-        return "[valve,on]\r\n"
-    }
+    fun createValveOn(): String = createValve1On()
+    fun createValveOff(): String = createValve1Off()
 
-    fun createValveOff(): String {
-        return "[valve,off]\r\n"
-    }
+    fun createValve1On(): String { return "[valve1,on]\r\n" }
+    fun createValve1Off(): String { return "[valve1,off]\r\n" }
+    fun createValve1Toggle(): String { return "[valve1,toggle]\r\n" }
+    fun createValve1Pulse(ms: Int): String { return "[valve1,pulse,$ms]\r\n" }
+    fun createValve1Query(): String { return "[valve1,query]\r\n" }
 
-    fun createValveToggle(): String {
-        return "[valve,toggle]\r\n"
-    }
-
-    fun createValvePulse(ms: Int): String {
-        return "[valve,pulse,$ms]\r\n"
-    }
-
-    fun createValveQuery(): String {
-        return "[valve,query]\r\n"
-    }
+    fun createValve2On(): String { return "[valve2,on]\r\n" }
+    fun createValve2Off(): String { return "[valve2,off]\r\n" }
+    fun createValve2Toggle(): String { return "[valve2,toggle]\r\n" }
+    fun createValve2Pulse(ms: Int): String { return "[valve2,pulse,$ms]\r\n" }
+    fun createValve2Query(): String { return "[valve2,query]\r\n" }
 
     fun createQuery(): String {
         return "[query]\r\n"
