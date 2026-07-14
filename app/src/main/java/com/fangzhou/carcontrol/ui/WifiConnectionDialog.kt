@@ -193,7 +193,6 @@ fun WifiConnectionDialog(
                         onClick = {
                             val portNum = port.toIntOrNull() ?: 9000
                             onConnect(WifiConfig(ipAddress, portNum, baudRate))
-                            onDismiss()
                         },
                         modifier = Modifier.weight(1f),
                         enabled = ipAddress.isNotBlank() && port.isNotBlank(),
