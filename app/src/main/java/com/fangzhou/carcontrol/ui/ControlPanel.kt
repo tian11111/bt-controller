@@ -411,34 +411,6 @@ private fun BoxScope.LayoutWidgets(
         }
     }
 
-    // ---- 查询 ----
-    val queryW = w(WidgetIds.BUTTON_QUERY)
-    if (queryW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = queryW?.offsetX ?: 0.33f,
-            offsetY = queryW?.offsetY ?: 0.80f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_QUERY, dx, dy) },
-            parentSize = parentSize
-        ) {
-            ActionButton(text = "查询", color = Color(0xFF4FC3F7)) { haptic.light(); viewModel.sendQuery() }
-        }
-    }
-
-    // ---- 自动 ----
-    val autoW = w(WidgetIds.BUTTON_AUTO_PLOT)
-    if (autoW?.visible != false) {
-        DraggableWidget(
-            isEditing = isEditing,
-            offsetX = autoW?.offsetX ?: 0.42f,
-            offsetY = autoW?.offsetY ?: 0.80f,
-            onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_AUTO_PLOT, dx, dy) },
-            parentSize = parentSize
-        ) {
-            ActionButton(text = "自动", color = Color(0xFFFFD54F)) { haptic.light(); viewModel.sendAutoPlot(true) }
-        }
-    }
-
     // ---- 急停 ----
     val stopW = w(WidgetIds.BUTTON_STOP)
     if (stopW?.visible != false) {
