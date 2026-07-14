@@ -62,8 +62,13 @@ class LayoutPreferences(context: Context) {
         val json = prefs.getString(KEY_LAYOUT, null) ?: return defaultLayout()
         return try {
             val type = object : TypeToken<LayoutConfig>() {}.type
-            val config: LayoutConfig = gson.fromJson(json, type) ?: defaultLayout()
-            config.copy(isEditing = false)
+            val saved: LayoutConfig = gson.fromJson(json, type) ?: defaultLayout()
+            // 合并：把保存布局里缺失的默认控件补进去，否则新加的控件拖不动也不保存
+            val defaults = defaultLayout()
+            val savedIds = saved.widgets.map { it.id }.toSet()
+            val missing = defaults.widgets.filter { it.id !in savedIds }
+            val merged = saved.widgets + missing
+            saved.copy(widgets = merged, isEditing = false)
         } catch (_: Exception) {
             defaultLayout()
         }
@@ -84,8 +89,8 @@ class LayoutPreferences(context: Context) {
             WidgetIds.SLIDER_GRIPPER_UPDOWN to (0.35f to 0.30f),
             WidgetIds.BUTTON_GRIPPER_OPEN to (0.33f to 0.68f),
             WidgetIds.BUTTON_GRIPPER_CLOSE to (0.42f to 0.68f),
-            WidgetIds.BUTTON_VALVE2_OPEN to (0.33f to 0.80f),
-            WidgetIds.BUTTON_VALVE2_CLOSE to (0.42f to 0.80f),
+            WidgetIds.BUTTON_VALVE2_OPEN to (0.51f to 0.68f),
+            WidgetIds.BUTTON_VALVE2_CLOSE to (0.60f to 0.68f),
             WidgetIds.BUTTON_STOP to (0.51f to 0.80f),
             WidgetIds.STATUS_DISPLAY to (0.72f to 0.08f),
         )

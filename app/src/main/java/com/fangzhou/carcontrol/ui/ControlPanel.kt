@@ -372,8 +372,8 @@ private fun BoxScope.LayoutWidgets(
     if (v2openW?.visible != false) {
         DraggableWidget(
             isEditing = isEditing,
-            offsetX = v2openW?.offsetX ?: 0.33f,
-            offsetY = v2openW?.offsetY ?: 0.80f,
+            offsetX = v2openW?.offsetX ?: 0.51f,
+            offsetY = v2openW?.offsetY ?: 0.68f,
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_VALVE2_OPEN, dx, dy) },
             parentSize = parentSize
         ) {
@@ -394,8 +394,8 @@ private fun BoxScope.LayoutWidgets(
     if (v2closeW?.visible != false) {
         DraggableWidget(
             isEditing = isEditing,
-            offsetX = v2closeW?.offsetX ?: 0.42f,
-            offsetY = v2closeW?.offsetY ?: 0.80f,
+            offsetX = v2closeW?.offsetX ?: 0.60f,
+            offsetY = v2closeW?.offsetY ?: 0.68f,
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_VALVE2_CLOSE, dx, dy) },
             parentSize = parentSize
         ) {
