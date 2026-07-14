@@ -164,15 +164,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendValveToggle() {
-        connectionManager.send(protocolEngine.createValveToggle())
+        connectionManager.send(protocolEngine.createValve1Toggle())
     }
 
     fun sendValvePulse(ms: Int = 150) {
-        connectionManager.send(protocolEngine.createValvePulse(ms))
+        connectionManager.send(protocolEngine.createValve1Pulse(ms))
     }
 
     fun sendValveQuery() {
-        connectionManager.send(protocolEngine.createValveQuery())
+        connectionManager.send(protocolEngine.createValve1Query())
     }
 
     fun setValveOn(on: Boolean) {
