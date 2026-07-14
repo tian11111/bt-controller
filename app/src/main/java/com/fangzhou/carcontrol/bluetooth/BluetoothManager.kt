@@ -31,8 +31,6 @@ import java.io.OutputStream
 import java.util.UUID
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 enum class ConnectionState {
     DISCONNECTED, CONNECTING, CONNECTED, ERROR
@@ -78,9 +76,6 @@ class BluetoothManager(private val context: Context) {
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     private var classicSendJob: Job? = null
-
-    // 保护 Classic SPP 写操作，防止紧急写与队列写交错
-    private val classicWriteMutex = Mutex()
 
     private var writeCallback: CancellableContinuation<Boolean>? = null
     private var writeJob: Job? = null
@@ -299,10 +294,8 @@ class BluetoothManager(private val context: Context) {
         classicSendJob = scope.launch {
             for (data in classicSendChannel) {
                 try {
-                    classicWriteMutex.withLock {
-                        outputStream?.write(data)
-                        outputStream?.flush()
-                    }
+                    outputStream?.write(data)
+                    outputStream?.flush()
                 } catch (e: IOException) {
                     Log.e(TAG, "Classic send queue error", e)
                     break
@@ -310,79 +303,6 @@ class BluetoothManager(private val context: Context) {
             }
         }
     }
-
-    /**
-     * 紧急发送 (Classic SPP)：清空队列后直接写 outputStream。
-     */
-    private fun sendUrgentClassic(data: ByteArray): Boolean {
-        while (classicSendChannel.tryReceive().isSuccess) { /* drain */ }
-        scope.launch(Dispatchers.IO) {
-            try {
-                classicWriteMutex.withLock {
-                    outputStream?.write(data)
-                    outputStream?.flush()
-                }
-            } catch (e: IOException) {
-                Log.e(TAG, "Classic urgent send error", e)
-            }
-        }
-        return true
-    }
-
-    /**
-     * 紧急发送 (BLE)：清空队列后直接走 GATT write。
-     */
-    private fun sendUrgentBle(data: ByteArray): Boolean {
-        while (writeChannel.tryReceive().isSuccess) { /* drain */ }
-        scope.launch(Dispatchers.IO) {
-            val g = gatt ?: return@launch
-            val tx = txCharacteristic ?: return@launch
-            if (!isBleConnection) return@launch
-
-            val chunks = mutableListOf<ByteArray>()
-            var offset = 0
-            while (offset < data.size) {
-                val end = minOf(offset + 20, data.size)
-                chunks.add(data.copyOfRange(offset, end))
-                offset = end
-            }
-
-            for (chunk in chunks) {
-                val success = withTimeoutOrNull(3000L) {
-                    suspendCancellableCoroutine<Boolean> { cont ->
-                        writeCallback = cont
-                        tx.value = chunk
-                        tx.writeType = if (tx.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
-                            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                        } else {
-                            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        }
-                        if (!g.writeCharacteristic(tx)) {
-                            cont.resume(false)
-                        }
-                    }
-                } ?: false
-                if (!success) {
-                    Log.w(TAG, "BLE urgent write failed/timeout for chunk")
-                    break
-                }
-            }
-        }
-        return true
-    }
-
-    /**
-     * 紧急发送：根据连接类型分发，绕过发送队列。
-     */
-    fun sendUrgent(data: ByteArray): Boolean {
-        return if (isBleConnection) {
-            sendUrgentBle(data)
-        } else {
-            sendUrgentClassic(data)
-        }
-    }
-
-    fun sendUrgent(data: String): Boolean = sendUrgent(data.toByteArray(Charsets.UTF_8))
 
     private fun startClassicReadLoop() {
         readJob?.cancel()

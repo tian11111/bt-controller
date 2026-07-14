@@ -101,18 +101,6 @@ class ConnectionManager(private val context: Context) {
         }
     }
 
-    /**
-     * 紧急发送：绕过发送队列，直接写底层传输层。
-     * 用于停止帧/急停，确保以最快速度送达。
-     */
-    fun sendUrgent(data: String): Boolean {
-        return when (_connectionType.value) {
-            ConnectionType.BLUETOOTH -> btManager.sendUrgent(data)
-            ConnectionType.WIFI -> wifiManager.sendUrgent(data)
-            ConnectionType.NONE -> false
-        }
-    }
-
     fun sendBytes(data: ByteArray): Boolean {
         return when (_connectionType.value) {
             ConnectionType.BLUETOOTH -> btManager.sendBytes(data)

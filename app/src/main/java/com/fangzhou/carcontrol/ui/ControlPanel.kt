@@ -130,23 +130,19 @@ fun ControlPanel(
 
                 // 只在值明显变化、非零保活、由运动变为停止或长时间空闲保活时发送。
                 // 松手瞬间启动多次补发，解决 BLE/无线丢包导致小车“停不下来”的问题。
-                val IDLE_KEEPALIVE_INTERVAL = 500L
+                val IDLE_KEEPALIVE_INTERVAL = 50L
                 val jIdleTimeout = jIsZero && (now - lastJoystickSendTime >= IDLE_KEEPALIVE_INTERVAL)
                 val jShouldSend = jStopped ||
                     (jCanSend && joystickStopRepeat > 0 && jIsZero) ||
                     (jCanSend && (jDiff > THRESHOLD_UP || jTimeout || jIdleTimeout))
 
                 if (jShouldSend) {
-                    if (jIsZero) {
-                        viewModel.sendUrgentJoystick(0, 0, 0, 0)
-                    } else {
-                        viewModel.sendJoystick(lx, ly, rx, 0)
-                    }
+                    viewModel.sendJoystick(lx, ly, rx, 0)
                     lastSentLx = lx
                     lastSentLy = ly
                     lastSentRx = rx
                     lastJoystickSendTime = now
-                    if (jStopped) joystickStopRepeat = 8
+                    if (jStopped) joystickStopRepeat = 4
                     else if (joystickStopRepeat > 0) joystickStopRepeat--
                 }
 
@@ -163,23 +159,15 @@ fun ControlPanel(
                     (gCanSend && (gDiff > THRESHOLD_UP || gTimeout || gIdleTimeout))
 
                 if (gShouldSend) {
-                    if (gx == 0) {
-                        viewModel.sendUrgentGripper(0, 0)
-                    } else {
-                        viewModel.sendGripper(gx, gx)
-                    }
+                    viewModel.sendGripper(gx, gx)
                     lastSentGx = gx
                     lastGripperSendTime = now
-                    if (gStopped) gripperStopRepeat = 8
+                    if (gStopped) gripperStopRepeat = 4
                     else if (gripperStopRepeat > 0) gripperStopRepeat--
                 }
 
-                // 停止帧重试时用 20ms 间隔，给固件处理时间；正常运动用 10ms
-                if (joystickStopRepeat > 0 || gripperStopRepeat > 0) {
-                    delay(20)
-                } else {
-                    delay(10)
-                }
+                // 固定检测间隔
+                delay(10)
             }
         }
     }
