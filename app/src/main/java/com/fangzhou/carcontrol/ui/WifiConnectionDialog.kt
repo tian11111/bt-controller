@@ -2,6 +2,8 @@ package com.fangzhou.carcontrol.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -31,13 +33,15 @@ fun WifiConnectionDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(max = 600.dp)
                 .padding(16.dp),
             shape = RoundedCornerShape(16.dp),
             color = Color(0xFF1E1E1E)
         ) {
             Column(
                 modifier = Modifier
-                    .padding(24.dp),
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text(
@@ -62,7 +66,7 @@ fun WifiConnectionDialog(
                     Button(
                         onClick = {
                             ipAddress = "192.168.4.1"
-                            port = "8080"
+                            port = "9000"
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
@@ -75,7 +79,7 @@ fun WifiConnectionDialog(
                     Button(
                         onClick = {
                             ipAddress = "192.168.1.100"
-                            port = "8080"
+                            port = "9000"
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
@@ -112,7 +116,7 @@ fun WifiConnectionDialog(
                         }
                     },
                     label = { Text("端口", color = Color.Gray) },
-                    placeholder = { Text("8080", color = Color.Gray) },
+                    placeholder = { Text("9000", color = Color.Gray) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -187,7 +191,7 @@ fun WifiConnectionDialog(
 
                     Button(
                         onClick = {
-                            val portNum = port.toIntOrNull() ?: 8080
+                            val portNum = port.toIntOrNull() ?: 9000
                             onConnect(WifiConfig(ipAddress, portNum, baudRate))
                             onDismiss()
                         },

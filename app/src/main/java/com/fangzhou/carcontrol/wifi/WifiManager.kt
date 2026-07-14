@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -23,7 +25,7 @@ enum class WifiConnectionState {
 
 data class WifiConfig(
     val ip: String = "192.168.4.1",
-    val port: Int = 8080,
+    val port: Int = 9000,
     val baudRate: Int = 9600
 )
 
@@ -42,12 +44,16 @@ class WifiManager(private val context: Context) {
     private var readJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // TCP 发送队列：在主线程调用 send 时不会直接阻塞 I/O，DROP_OLDEST 防止旧指令堆积
+    // TCP 发送队列：与蓝牙 classicSendChannel 相同策略
+    // BUFFERED + DROP_OLDEST：保留缓冲，满时丢最旧帧，停止帧可多次入队保证送达
     private val sendChannel = Channel<ByteArray>(
         Channel.BUFFERED,
         onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     private var sendJob: Job? = null
+
+    // 保护所有 socket 写操作，防止紧急写与队列写交错
+    private val writeMutex = Mutex()
 
     private val _connectionState = MutableStateFlow(WifiConnectionState.DISCONNECTED)
     val connectionState: StateFlow<WifiConnectionState> = _connectionState.asStateFlow()
@@ -134,14 +140,37 @@ class WifiManager(private val context: Context) {
         sendJob = scope.launch {
             for (data in sendChannel) {
                 try {
-                    outputStream?.write(data)
-                    outputStream?.flush()
+                    writeMutex.withLock {
+                        outputStream?.write(data)
+                        outputStream?.flush()
+                    }
                 } catch (e: IOException) {
                     Log.e(TAG, "WiFi send queue error", e)
                     break
                 }
             }
         }
+    }
+
+    /**
+     * 紧急发送：清空队列后直接写 socket，绕过排队延迟。
+     * 用于停止帧/急停，确保以最快速度送达。
+     */
+    fun sendUrgent(data: String): Boolean = sendUrgentBytes(data.toByteArray(Charsets.UTF_8))
+
+    fun sendUrgentBytes(data: ByteArray): Boolean {
+        while (sendChannel.tryReceive().isSuccess) { /* drain */ }
+        scope.launch(Dispatchers.IO) {
+            try {
+                writeMutex.withLock {
+                    outputStream?.write(data)
+                    outputStream?.flush()
+                }
+            } catch (e: IOException) {
+                Log.e(TAG, "WiFi urgent send error", e)
+            }
+        }
+        return true
     }
 
     fun disconnect() {

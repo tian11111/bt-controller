@@ -32,7 +32,7 @@ class ConnectionPreferences(context: Context) {
     fun loadWifiConfig(): WifiConfig {
         return WifiConfig(
             ip = prefs.getString(KEY_IP, "192.168.4.1") ?: "192.168.4.1",
-            port = prefs.getInt(KEY_PORT, 8080),
+            port = prefs.getInt(KEY_PORT, 9000),
             baudRate = prefs.getInt(KEY_BAUD, DEFAULT_BAUD).coerceAtLeast(1200)
         )
     }

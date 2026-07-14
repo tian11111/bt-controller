@@ -137,12 +137,16 @@ fun ControlPanel(
                     (jCanSend && (jDiff > THRESHOLD_UP || jTimeout || jIdleTimeout))
 
                 if (jShouldSend) {
-                    viewModel.sendJoystick(lx, ly, rx, 0)
+                    if (jIsZero) {
+                        viewModel.sendUrgentJoystick(0, 0, 0, 0)
+                    } else {
+                        viewModel.sendJoystick(lx, ly, rx, 0)
+                    }
                     lastSentLx = lx
                     lastSentLy = ly
                     lastSentRx = rx
                     lastJoystickSendTime = now
-                    if (jStopped) joystickStopRepeat = 4
+                    if (jStopped) joystickStopRepeat = 8
                     else if (joystickStopRepeat > 0) joystickStopRepeat--
                 }
 
@@ -159,15 +163,23 @@ fun ControlPanel(
                     (gCanSend && (gDiff > THRESHOLD_UP || gTimeout || gIdleTimeout))
 
                 if (gShouldSend) {
-                    viewModel.sendGripper(gx, gx)
+                    if (gx == 0) {
+                        viewModel.sendUrgentGripper(0, 0)
+                    } else {
+                        viewModel.sendGripper(gx, gx)
+                    }
                     lastSentGx = gx
                     lastGripperSendTime = now
-                    if (gStopped) gripperStopRepeat = 4
+                    if (gStopped) gripperStopRepeat = 8
                     else if (gripperStopRepeat > 0) gripperStopRepeat--
                 }
 
-                // 固定检测间隔
-                delay(10)
+                // 停止帧重试时用 20ms 间隔，给固件处理时间；正常运动用 10ms
+                if (joystickStopRepeat > 0 || gripperStopRepeat > 0) {
+                    delay(20)
+                } else {
+                    delay(10)
+                }
             }
         }
     }

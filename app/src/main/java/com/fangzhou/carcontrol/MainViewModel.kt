@@ -137,6 +137,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         connectionManager.send(data)
     }
 
+    /**
+     * 紧急摇杆停止帧：绕过发送队列直接写底层传输层。
+     */
+    fun sendUrgentJoystick(lx: Int, ly: Int, rx: Int = 0, ry: Int = 0) {
+        val data = protocolEngine.createJoystick(lx, ly, rx, ry)
+        connectionManager.sendUrgent(data)
+    }
+
+    /**
+     * 紧急夹爪停止帧：绕过发送队列直接写底层传输层。
+     */
+    fun sendUrgentGripper(xSpeed: Int, ySpeed: Int) {
+        val data = protocolEngine.createGripper(xSpeed, ySpeed)
+        connectionManager.sendUrgent(data)
+    }
+
     // ===== 电磁阀（夹爪开合） =====
     fun sendValveOn() {
         connectionManager.send(protocolEngine.createValveOn())
@@ -175,8 +191,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendStop() {
-        connectionManager.send(protocolEngine.createJoystick(0, 0, 0, 0))
-        connectionManager.send(protocolEngine.createGripper(0, 0))
+        connectionManager.sendUrgent(protocolEngine.createJoystick(0, 0, 0, 0))
+        try { Thread.sleep(5) } catch (_: InterruptedException) {}
+        connectionManager.sendUrgent(protocolEngine.createGripper(0, 0))
     }
 
     fun sendCustomCommand(command: String) {
