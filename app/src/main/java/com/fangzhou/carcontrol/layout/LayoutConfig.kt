@@ -84,8 +84,8 @@ class LayoutPreferences(context: Context) {
             WidgetIds.SLIDER_GRIPPER_UPDOWN to (0.35f to 0.30f),
             WidgetIds.BUTTON_GRIPPER_OPEN to (0.33f to 0.68f),
             WidgetIds.BUTTON_GRIPPER_CLOSE to (0.42f to 0.68f),
-            WidgetIds.BUTTON_VALVE2_OPEN to (0.51f to 0.68f),
-            WidgetIds.BUTTON_VALVE2_CLOSE to (0.60f to 0.68f),
+            WidgetIds.BUTTON_VALVE2_OPEN to (0.33f to 0.80f),
+            WidgetIds.BUTTON_VALVE2_CLOSE to (0.42f to 0.80f),
             WidgetIds.BUTTON_STOP to (0.51f to 0.80f),
             WidgetIds.STATUS_DISPLAY to (0.72f to 0.08f),
         )
