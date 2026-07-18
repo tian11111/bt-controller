@@ -17,14 +17,14 @@ import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -63,25 +63,10 @@ class BluetoothManager(private val context: Context) {
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
     private var isBleConnection = false
 
-    // BLE 写入队列：必须等 onCharacteristicWrite 回调后才能写下一条
-    // 使用 DROP_OLDEST 防止旧指令堆积导致延迟
-    private val writeChannel = Channel<ByteArray>(
-        Channel.BUFFERED,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-
-    // 经典蓝牙发送队列：避免在主线程直接写 OutputStream
-    private val classicSendChannel = Channel<ByteArray>(
-        Channel.BUFFERED,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
-    private var classicSendJob: Job? = null
-
     private var writeCallback: CancellableContinuation<Boolean>? = null
-    private var writeJob: Job? = null
-
     private var readJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val writeMutex = Mutex()
 
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
@@ -141,7 +126,6 @@ class BluetoothManager(private val context: Context) {
                 inputStream = sock.inputStream
                 outputStream = sock.outputStream
                 _connectionState.value = ConnectionState.CONNECTED
-                startClassicSendLoop()
                 startClassicReadLoop()
             } else {
                 connectBle(device)
@@ -203,12 +187,6 @@ class BluetoothManager(private val context: Context) {
                 this@BluetoothManager.gatt = gatt
                 _connectionState.value = ConnectionState.CONNECTED
                 enableRxNotification(gatt)
-                startWriteQueue()
-                // 测试写入
-                scope.launch {
-                    delay(300)
-                    send("[query]")
-                }
             } else {
                 Log.e(TAG, "No usable characteristics found")
                 scope.launch { _connectionState.value = ConnectionState.ERROR; cleanup() }
@@ -245,63 +223,59 @@ class BluetoothManager(private val context: Context) {
         }
     }
 
-    // ==================== BLE 写入队列 ====================
+    // ==================== Serialized transport write ====================
 
-    private fun startWriteQueue() {
-        writeJob?.cancel()
-        writeJob = scope.launch {
-            for (data in writeChannel) {
-                val g = gatt ?: break
-                val tx = txCharacteristic ?: break
-                if (!isBleConnection) break
-                Log.d(TAG, "writeQueue: processing ${data.size} bytes")
+    /** 仅供ConnectionManager的统一调度器调用，本层不再保存业务发送队列。 */
+    suspend fun writeFrame(data: ByteArray): Boolean = writeMutex.withLock {
+        if (_connectionState.value != ConnectionState.CONNECTED) return@withLock false
+        if (isBleConnection) writeBleFrame(data) else writeClassicFrame(data)
+    }
 
-                // 分包
-                val chunks = mutableListOf<ByteArray>()
-                var offset = 0
-                while (offset < data.size) {
-                    val end = minOf(offset + 20, data.size)
-                    chunks.add(data.copyOfRange(offset, end))
-                    offset = end
-                }
-
-                for (chunk in chunks) {
-                    val success = withTimeoutOrNull(3000L) {
-                        suspendCancellableCoroutine<Boolean> { cont ->
-                            writeCallback = cont
-                            tx.value = chunk
-                            tx.writeType = if (tx.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
-                                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                            } else {
-                                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                            }
-                            if (!g.writeCharacteristic(tx)) {
-                                cont.resume(false)
-                            }
-                        }
-                    } ?: false
-                    if (!success) {
-                        Log.w(TAG, "BLE write failed/timeout for chunk")
-                        break
-                    }
-                }
-            }
+    private suspend fun writeClassicFrame(data: ByteArray): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val output = outputStream ?: return@withContext false
+            output.write(data)
+            output.flush()
+            true
+        } catch (e: IOException) {
+            Log.e(TAG, "Classic write error", e)
+            false
         }
     }
 
-    private fun startClassicSendLoop() {
-        classicSendJob?.cancel()
-        classicSendJob = scope.launch {
-            for (data in classicSendChannel) {
-                try {
-                    outputStream?.write(data)
-                    outputStream?.flush()
-                } catch (e: IOException) {
-                    Log.e(TAG, "Classic send queue error", e)
-                    break
+    @SuppressLint("MissingPermission")
+    private suspend fun writeBleFrame(data: ByteArray): Boolean {
+        val g = gatt ?: return false
+        val tx = txCharacteristic ?: return false
+        var offset = 0
+        while (offset < data.size) {
+            val end = minOf(offset + 20, data.size)
+            val chunk = data.copyOfRange(offset, end)
+            val success = withTimeoutOrNull(3000L) {
+                suspendCancellableCoroutine<Boolean> { cont ->
+                    writeCallback = cont
+                    cont.invokeOnCancellation {
+                        if (writeCallback === cont) writeCallback = null
+                    }
+                    tx.value = chunk
+                    tx.writeType = if (tx.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) {
+                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    } else {
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    }
+                    if (!g.writeCharacteristic(tx)) {
+                        if (writeCallback === cont) writeCallback = null
+                        if (cont.isActive) cont.resume(false)
+                    }
                 }
+            } ?: false
+            if (!success) {
+                Log.w(TAG, "BLE write failed/timeout for chunk")
+                return false
             }
+            offset = end
         }
+        return true
     }
 
     private fun startClassicReadLoop() {
@@ -401,21 +375,15 @@ class BluetoothManager(private val context: Context) {
     fun send(data: String): Boolean = sendBytes(data.toByteArray(Charsets.UTF_8))
 
     fun sendBytes(data: ByteArray): Boolean {
-        return if (isBleConnection) {
-            writeChannel.trySend(data).isSuccess
-        } else {
-            classicSendChannel.trySend(data).isSuccess
-        }
+        if (_connectionState.value != ConnectionState.CONNECTED) return false
+        scope.launch { writeFrame(data) }
+        return true
     }
 
     // ==================== Disconnect ====================
 
     fun disconnect() {
         readJob?.cancel()
-        writeJob?.cancel()
-        classicSendJob?.cancel()
-        while (writeChannel.tryReceive().isSuccess) { /* drain */ }
-        while (classicSendChannel.tryReceive().isSuccess) { /* drain */ }
         cleanup()
         _connectionState.value = ConnectionState.DISCONNECTED
     }

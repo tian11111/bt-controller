@@ -15,8 +15,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 enum class ConnectionType {
@@ -43,77 +43,125 @@ class ConnectionManager(private val context: Context) {
     private val _receivedData = MutableSharedFlow<String>(extraBufferCapacity = 64)
     val receivedData: SharedFlow<String> = _receivedData.asSharedFlow()
 
+    private val scheduler = OutboundScheduler(
+        scope = scope,
+        isConnected = { _unifiedState.value == UnifiedConnectionState.CONNECTED },
+        writeFrame = { data ->
+            when (_connectionType.value) {
+                ConnectionType.BLUETOOTH -> btManager.writeFrame(data)
+                ConnectionType.WIFI -> wifiManager.writeFrame(data)
+                ConnectionType.NONE -> false
+            }
+        },
+        minFrameIntervalMs = 40L
+    )
+    val sendEvents: SharedFlow<SendEvent> = scheduler.events
+
     init {
-        // 统一转发两个传输层的数据流，解决切换蓝牙/WiFi后 UI 收不到数据的问题
+        // 只接收当前活动传输的数据，避免切换连接时旧连接的回调污染ACK和UI。
         scope.launch {
-            btManager.receivedData.collect { _receivedData.emit(it) }
-        }
-        scope.launch {
-            wifiManager.receivedData.collect { _receivedData.emit(it) }
-        }
-
-        // 监听蓝牙状态变化
-        scope.launch {
-            btManager.connectionState.collect { btState ->
+            btManager.receivedData.collect { raw ->
                 if (_connectionType.value == ConnectionType.BLUETOOTH) {
-                    _unifiedState.value = when (btState) {
-                        BtConnectionState.DISCONNECTED -> UnifiedConnectionState.DISCONNECTED
-                        BtConnectionState.CONNECTING -> UnifiedConnectionState.CONNECTING
-                        BtConnectionState.CONNECTED -> UnifiedConnectionState.CONNECTED
-                        BtConnectionState.ERROR -> UnifiedConnectionState.ERROR
-                    }
+                    scheduler.onIncomingData(raw)
+                    _receivedData.emit(raw)
+                }
+            }
+        }
+        scope.launch {
+            wifiManager.receivedData.collect { raw ->
+                if (_connectionType.value == ConnectionType.WIFI) {
+                    scheduler.onIncomingData(raw)
+                    _receivedData.emit(raw)
                 }
             }
         }
 
-        // 监听 WiFi 状态变化
         scope.launch {
-            wifiManager.connectionState.collect { wifiState ->
-                if (_connectionType.value == ConnectionType.WIFI) {
-                    _unifiedState.value = when (wifiState) {
-                        WifiConnectionState.DISCONNECTED -> UnifiedConnectionState.DISCONNECTED
-                        WifiConnectionState.CONNECTING -> UnifiedConnectionState.CONNECTING
-                        WifiConnectionState.CONNECTED -> UnifiedConnectionState.CONNECTED
-                        WifiConnectionState.ERROR -> UnifiedConnectionState.ERROR
-                    }
+            btManager.connectionState.collect { state ->
+                if (_connectionType.value == ConnectionType.BLUETOOTH) {
+                    updateUnifiedState(
+                        when (state) {
+                            BtConnectionState.DISCONNECTED -> UnifiedConnectionState.DISCONNECTED
+                            BtConnectionState.CONNECTING -> UnifiedConnectionState.CONNECTING
+                            BtConnectionState.CONNECTED -> UnifiedConnectionState.CONNECTED
+                            BtConnectionState.ERROR -> UnifiedConnectionState.ERROR
+                        }
+                    )
                 }
             }
+        }
+
+        scope.launch {
+            wifiManager.connectionState.collect { state ->
+                if (_connectionType.value == ConnectionType.WIFI) {
+                    updateUnifiedState(
+                        when (state) {
+                            WifiConnectionState.DISCONNECTED -> UnifiedConnectionState.DISCONNECTED
+                            WifiConnectionState.CONNECTING -> UnifiedConnectionState.CONNECTING
+                            WifiConnectionState.CONNECTED -> UnifiedConnectionState.CONNECTED
+                            WifiConnectionState.ERROR -> UnifiedConnectionState.ERROR
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    private fun updateUnifiedState(newState: UnifiedConnectionState) {
+        val oldState = _unifiedState.value
+        if (oldState == newState) return
+        _unifiedState.value = newState
+        if (newState == UnifiedConnectionState.CONNECTED) {
+            scheduler.beginSession()
+        } else if (oldState == UnifiedConnectionState.CONNECTED ||
+            newState == UnifiedConnectionState.DISCONNECTED ||
+            newState == UnifiedConnectionState.ERROR
+        ) {
+            scheduler.reset()
         }
     }
 
     fun connectBluetooth(device: BluetoothDevice) {
         disconnectAll()
+        scheduler.reset()
         _connectionType.value = ConnectionType.BLUETOOTH
+        _unifiedState.value = UnifiedConnectionState.CONNECTING
         btManager.connect(device)
     }
 
     fun connectWifi(config: WifiConfig) {
         disconnectAll()
+        scheduler.reset()
         _connectionType.value = ConnectionType.WIFI
+        _unifiedState.value = UnifiedConnectionState.CONNECTING
         wifiManager.connect(config)
     }
 
-    fun send(data: String): Boolean {
-        return when (_connectionType.value) {
-            ConnectionType.BLUETOOTH -> btManager.send(data)
-            ConnectionType.WIFI -> wifiManager.send(data)
-            ConnectionType.NONE -> false
-        }
-    }
+    fun sendRealtime(key: String, data: String): Boolean = scheduler.submitRealtime(key, data)
 
-    fun sendBytes(data: ByteArray): Boolean {
-        return when (_connectionType.value) {
-            ConnectionType.BLUETOOTH -> btManager.sendBytes(data)
-            ConnectionType.WIFI -> wifiManager.sendBytes(data)
-            ConnectionType.NONE -> false
-        }
-    }
+    fun sendStopStream(key: String, data: String, totalSends: Int = 4): Boolean =
+        scheduler.submitStop(key, data, totalSends)
+
+    fun sendEmergencyStop(
+        joystickStop: String,
+        gripperStop: String,
+        totalSends: Int = 4
+    ): Boolean = scheduler.submitEmergencyStop(joystickStop, gripperStop, totalSends)
+
+    fun sendReliable(key: String, data: String, ackToken: String): Boolean =
+        scheduler.submitReliable(key, data, ackToken, ackTimeoutMs = 150L, maxAttempts = 3)
+
+    /** 查询、自定义命令等走有界FIFO，不再与实时运动帧互相覆盖。 */
+    fun send(data: String): Boolean = scheduler.submitNormal(data)
+
+    fun sendBytes(data: ByteArray): Boolean = scheduler.submitNormalBytes(data)
 
     fun disconnect() {
+        scheduler.reset()
         when (_connectionType.value) {
             ConnectionType.BLUETOOTH -> btManager.disconnect()
             ConnectionType.WIFI -> wifiManager.disconnect()
-            ConnectionType.NONE -> {}
+            ConnectionType.NONE -> Unit
         }
         _connectionType.value = ConnectionType.NONE
         _unifiedState.value = UnifiedConnectionState.DISCONNECTED
@@ -125,6 +173,7 @@ class ConnectionManager(private val context: Context) {
     }
 
     fun destroy() {
+        scheduler.reset()
         btManager.destroy()
         wifiManager.destroy()
         scope.cancel()

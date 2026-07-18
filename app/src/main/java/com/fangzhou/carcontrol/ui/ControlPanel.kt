@@ -48,7 +48,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,7 +67,6 @@ import com.fangzhou.carcontrol.MainViewModel
 import com.fangzhou.carcontrol.connection.ConnectionType
 import com.fangzhou.carcontrol.connection.UnifiedConnectionState
 import com.fangzhou.carcontrol.layout.WidgetIds
-import kotlinx.coroutines.delay
 
 @Composable
 fun ControlPanel(
@@ -87,90 +85,6 @@ fun ControlPanel(
     var showAddButton by remember { mutableStateOf(false) }
     var showCustomCmd by remember { mutableStateOf(false) }
 
-    // 自动发送 - 差分压缩算法
-    LaunchedEffect(connectionState) {
-        if (connectionState == UnifiedConnectionState.CONNECTED) {
-            // 算法参数
-            val THRESHOLD_UP = 10       // 值变化阈值
-            val MAX_INTERVAL = 100L     // 摇杆未归零时的保活间隔 (ms)
-            // 不要按触摸事件频率发送。BLE 写入需要等待回调，过快会在写队列中积压旧指令。
-            val MIN_INTERVAL = 35L      // 最高约 28 Hz，兼顾响应与串口/BLE 带宽
-
-            // 状态变量
-            var lastSentLx = 0
-            var lastSentLy = 0
-            var lastSentRx = 0
-            var lastSentGx = 0
-            var lastJoystickSendTime = 0L
-            var lastGripperSendTime = 0L
-            var joystickStopRepeat = 0   // 摇杆松手后补发停止帧次数
-            var gripperStopRepeat = 0
-
-            while (true) {
-                val now = System.currentTimeMillis()
-                val s = viewModel.carState.value
-
-                // 读取当前值
-                val lx = (s.moveX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
-                val ly = (s.moveY * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
-                val rx = (s.turnX * 100).toInt().let { if (kotlin.math.abs(it) < 5) 0 else it }.coerceIn(-100, 100)
-                val gx = (s.gripperUpDown * 300).toInt().let { if (kotlin.math.abs(it) < 20) 0 else it }.coerceIn(-300, 300)
-
-                // ========== 无刷电机 - 差分压缩 ==========
-                val jDiff = maxOf(
-                    kotlin.math.abs(lx - lastSentLx),
-                    kotlin.math.abs(ly - lastSentLy),
-                    kotlin.math.abs(rx - lastSentRx)
-                )
-                val jIsZero = (lx == 0 && ly == 0 && rx == 0)
-                val lastJoystickWasZero = (lastSentLx == 0 && lastSentLy == 0 && lastSentRx == 0)
-                val jStopped = jIsZero && !lastJoystickWasZero
-                val jTimeout = !jIsZero && (now - lastJoystickSendTime >= MAX_INTERVAL)
-                val jCanSend = (now - lastJoystickSendTime >= MIN_INTERVAL)
-
-                // 只在值明显变化、非零保活、由运动变为停止或长时间空闲保活时发送。
-                // 松手瞬间启动多次补发，解决 BLE/无线丢包导致小车“停不下来”的问题。
-                val IDLE_KEEPALIVE_INTERVAL = 50L
-                val jIdleTimeout = jIsZero && (now - lastJoystickSendTime >= IDLE_KEEPALIVE_INTERVAL)
-                val jShouldSend = jStopped ||
-                    (jCanSend && joystickStopRepeat > 0 && jIsZero) ||
-                    (jCanSend && (jDiff > THRESHOLD_UP || jTimeout || jIdleTimeout))
-
-                if (jShouldSend) {
-                    viewModel.sendJoystick(lx, ly, rx, 0)
-                    lastSentLx = lx
-                    lastSentLy = ly
-                    lastSentRx = rx
-                    lastJoystickSendTime = now
-                    if (jStopped) joystickStopRepeat = 4
-                    else if (joystickStopRepeat > 0) joystickStopRepeat--
-                }
-
-                // ========== 步进电机 - 差分压缩 ==========
-                val gDiff = kotlin.math.abs(gx - lastSentGx)
-                val gStopped = (gx == 0 && lastSentGx != 0)
-                val gTimeout = (gx != 0 && now - lastGripperSendTime >= MAX_INTERVAL)
-                val gCanSend = (now - lastGripperSendTime >= MIN_INTERVAL)
-
-                // 夹爪松手后也启动多次补发，避免单包丢失导致夹爪停不下来。
-                val gIdleTimeout = (gx == 0) && (now - lastGripperSendTime >= IDLE_KEEPALIVE_INTERVAL)
-                val gShouldSend = gStopped ||
-                    (gCanSend && gripperStopRepeat > 0 && gx == 0) ||
-                    (gCanSend && (gDiff > THRESHOLD_UP || gTimeout || gIdleTimeout))
-
-                if (gShouldSend) {
-                    viewModel.sendGripper(gx, gx)
-                    lastSentGx = gx
-                    lastGripperSendTime = now
-                    if (gStopped) gripperStopRepeat = 4
-                    else if (gripperStopRepeat > 0) gripperStopRepeat--
-                }
-
-                // 固定检测间隔
-                delay(10)
-            }
-        }
-    }
     // 编辑模式边框透明度动画
     val editBorderAlpha by animateFloatAsState(
         targetValue = if (isEditing) 1f else 0f,
