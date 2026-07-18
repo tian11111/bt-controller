@@ -2,14 +2,22 @@ package com.fangzhou.carcontrol.wifi
 
 import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -40,12 +48,7 @@ class WifiManager(private val context: Context) {
 
     private var readJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-
-    // TCP 发送队列：CONFLATED 只保留最新帧，不堆积
-    // WiFi write 不阻塞(不像蓝牙SPP)，BUFFERED 会积压导致停止帧排在旧帧后面
-    // CONFLATED 确保停止帧立即替换运动帧，一帧一帧地发，行为接近蓝牙
-    private val sendChannel = Channel<ByteArray>(Channel.CONFLATED)
-    private var sendJob: Job? = null
+    private val writeMutex = Mutex()
 
     private val _connectionState = MutableStateFlow(WifiConnectionState.DISCONNECTED)
     val connectionState: StateFlow<WifiConnectionState> = _connectionState.asStateFlow()
@@ -58,7 +61,7 @@ class WifiManager(private val context: Context) {
             Log.w(TAG, "Already connecting")
             return
         }
-        
+
         disconnect()
         _connectionState.value = WifiConnectionState.CONNECTING
         Log.i(TAG, "Connecting to TCP ${config.ip}:${config.port}, baudRate=${config.baudRate}")
@@ -66,12 +69,9 @@ class WifiManager(private val context: Context) {
         scope.launch {
             try {
                 val sock = Socket()
-                sock.connect(
-                    InetSocketAddress(config.ip, config.port),
-                    CONNECT_TIMEOUT_MS
-                )
-                sock.soTimeout = 0 // 无限等待读取
-                sock.tcpNoDelay = true // 禁用 Nagle 算法，降低延迟
+                sock.connect(InetSocketAddress(config.ip, config.port), CONNECT_TIMEOUT_MS)
+                sock.soTimeout = 0
+                sock.tcpNoDelay = true
 
                 socket = sock
                 inputStream = sock.getInputStream()
@@ -79,10 +79,7 @@ class WifiManager(private val context: Context) {
 
                 _connectionState.value = WifiConnectionState.CONNECTED
                 Log.i(TAG, "WiFi TCP connected, baudRate=${config.baudRate}")
-
                 startReading()
-                startSending()
-
             } catch (e: IOException) {
                 Log.e(TAG, "WiFi connect failed", e)
                 _connectionState.value = WifiConnectionState.ERROR
@@ -109,9 +106,7 @@ class WifiManager(private val context: Context) {
                     }
                 }
             } catch (e: IOException) {
-                if (isActive) {
-                    Log.e(TAG, "WiFi read error", e)
-                }
+                if (isActive) Log.e(TAG, "WiFi read error", e)
             } finally {
                 if (isActive) {
                     _connectionState.value = WifiConnectionState.DISCONNECTED
@@ -121,31 +116,33 @@ class WifiManager(private val context: Context) {
         }
     }
 
-    fun send(data: String): Boolean = sendBytes(data.toByteArray(Charsets.UTF_8))
-
-    fun sendBytes(data: ByteArray): Boolean {
-        return sendChannel.trySend(data).isSuccess
-    }
-
-    private fun startSending() {
-        sendJob?.cancel()
-        sendJob = scope.launch {
-            for (data in sendChannel) {
-                try {
-                    outputStream?.write(data)
-                    outputStream?.flush()
-                } catch (e: IOException) {
-                    Log.e(TAG, "WiFi send queue error", e)
-                    break
-                }
+    /** 由统一发送调度器调用；本层不再保存第二套发送队列。 */
+    suspend fun writeFrame(data: ByteArray): Boolean = writeMutex.withLock {
+        if (_connectionState.value != WifiConnectionState.CONNECTED) return@withLock false
+        withContext(Dispatchers.IO) {
+            try {
+                val output = outputStream ?: return@withContext false
+                output.write(data)
+                output.flush()
+                true
+            } catch (e: IOException) {
+                Log.e(TAG, "WiFi write error", e)
+                false
             }
         }
     }
 
+    // 兼容旧调用；正常业务应通过ConnectionManager的统一调度器发送。
+    fun send(data: String): Boolean = sendBytes(data.toByteArray(Charsets.UTF_8))
+
+    fun sendBytes(data: ByteArray): Boolean {
+        if (_connectionState.value != WifiConnectionState.CONNECTED) return false
+        scope.launch { writeFrame(data) }
+        return true
+    }
+
     fun disconnect() {
         readJob?.cancel()
-        sendJob?.cancel()
-        while (sendChannel.tryReceive().isSuccess) { /* 清空待发送队列 */ }
         cleanup()
         _connectionState.value = WifiConnectionState.DISCONNECTED
     }

@@ -2,22 +2,27 @@ package com.fangzhou.carcontrol
 
 import android.app.Application
 import android.bluetooth.BluetoothDevice
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.fangzhou.carcontrol.connection.ConnectionManager
-import com.fangzhou.carcontrol.connection.ConnectionPreferences
-import com.fangzhou.carcontrol.connection.ConnectionType
 import com.fangzhou.carcontrol.bluetooth.ProtocolCommandStore
 import com.fangzhou.carcontrol.bluetooth.ProtocolEngine
 import com.fangzhou.carcontrol.bluetooth.ProtocolMessage
+import com.fangzhou.carcontrol.connection.ConnectionManager
+import com.fangzhou.carcontrol.connection.ConnectionPreferences
+import com.fangzhou.carcontrol.connection.SendEvent
+import com.fangzhou.carcontrol.connection.UnifiedConnectionState
 import com.fangzhou.carcontrol.layout.LayoutConfig
 import com.fangzhou.carcontrol.layout.LayoutPreferences
 import com.fangzhou.carcontrol.layout.WidgetLayout
 import com.fangzhou.carcontrol.wifi.WifiConfig
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 data class CarState(
     val motorSpeeds: List<Int> = listOf(0, 0, 0, 0),
@@ -34,6 +39,13 @@ data class CarState(
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val CONTROL_POLL_MS = 10L
+        private const val CONTROL_MIN_SEND_MS = 40L
+        private const val CONTROL_HEARTBEAT_MS = 100L
+        private const val CONTROL_CHANGE_THRESHOLD = 10
+    }
 
     val connectionManager = ConnectionManager(application)
     val protocolEngine = ProtocolEngine()
@@ -55,6 +67,120 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 processReceivedData(raw)
             }
         }
+        viewModelScope.launch {
+            connectionManager.sendEvents.collect { event ->
+                when (event) {
+                    is SendEvent.Ack -> addLog(
+                        "TX确认: ${event.key}，第${event.attempts}次成功，${event.latencyMs}ms"
+                    )
+                    is SendEvent.Failed -> addLog("发送失败: ${event.key}，${event.reason}")
+                }
+            }
+        }
+        startControlLoop()
+    }
+
+    private fun startControlLoop() {
+        viewModelScope.launch {
+            var wasConnected = false
+            var lastSentLx = 0
+            var lastSentLy = 0
+            var lastSentRx = 0
+            var lastSentGx = 0
+            var lastJoystickSendAt = 0L
+            var lastGripperSendAt = 0L
+
+            while (isActive) {
+                val connected = connectionManager.unifiedState.value == UnifiedConnectionState.CONNECTED
+                if (!connected) {
+                    wasConnected = false
+                    lastSentLx = 0
+                    lastSentLy = 0
+                    lastSentRx = 0
+                    lastSentGx = 0
+                    lastJoystickSendAt = 0L
+                    lastGripperSendAt = 0L
+                    delay(CONTROL_POLL_MS)
+                    continue
+                }
+
+                if (!wasConnected) {
+                    wasConnected = true
+                    // 新连接先清一次残留运动状态；用户立即操作时，实时帧会取消对应停止重发。
+                    connectionManager.sendEmergencyStop(
+                        protocolEngine.createJoystick(0, 0, 0, 0),
+                        protocolEngine.createGripper(0, 0),
+                        totalSends = 2
+                    )
+                }
+
+                val now = SystemClock.elapsedRealtime()
+                val state = _carState.value
+                val lx = normalizeControl(state.moveX, scale = 100, deadZone = 5, limit = 100)
+                val ly = normalizeControl(state.moveY, scale = 100, deadZone = 5, limit = 100)
+                val rx = normalizeControl(state.turnX, scale = 100, deadZone = 5, limit = 100)
+                val gx = normalizeControl(state.gripperUpDown, scale = 300, deadZone = 20, limit = 300)
+
+                val joystickIsZero = lx == 0 && ly == 0 && rx == 0
+                val joystickWasZero = lastSentLx == 0 && lastSentLy == 0 && lastSentRx == 0
+                if (joystickIsZero) {
+                    if (!joystickWasZero) {
+                        connectionManager.sendStopStream(
+                            key = "joystick",
+                            data = protocolEngine.createJoystick(0, 0, 0, 0),
+                            totalSends = 4
+                        )
+                        lastSentLx = 0
+                        lastSentLy = 0
+                        lastSentRx = 0
+                        lastJoystickSendAt = now
+                    }
+                } else if (now - lastJoystickSendAt >= CONTROL_MIN_SEND_MS) {
+                    val changed = maxOf(
+                        abs(lx - lastSentLx),
+                        abs(ly - lastSentLy),
+                        abs(rx - lastSentRx)
+                    ) >= CONTROL_CHANGE_THRESHOLD
+                    val heartbeatDue = now - lastJoystickSendAt >= CONTROL_HEARTBEAT_MS
+                    if (changed || heartbeatDue) {
+                        sendJoystick(lx, ly, rx, 0)
+                        lastSentLx = lx
+                        lastSentLy = ly
+                        lastSentRx = rx
+                        lastJoystickSendAt = now
+                    }
+                }
+
+                val gripperIsZero = gx == 0
+                val gripperWasZero = lastSentGx == 0
+                if (gripperIsZero) {
+                    if (!gripperWasZero) {
+                        connectionManager.sendStopStream(
+                            key = "gripper",
+                            data = protocolEngine.createGripper(0, 0),
+                            totalSends = 4
+                        )
+                        lastSentGx = 0
+                        lastGripperSendAt = now
+                    }
+                } else if (now - lastGripperSendAt >= CONTROL_MIN_SEND_MS) {
+                    val changed = abs(gx - lastSentGx) >= CONTROL_CHANGE_THRESHOLD
+                    val heartbeatDue = now - lastGripperSendAt >= CONTROL_HEARTBEAT_MS
+                    if (changed || heartbeatDue) {
+                        sendGripper(gx, gx)
+                        lastSentGx = gx
+                        lastGripperSendAt = now
+                    }
+                }
+
+                delay(CONTROL_POLL_MS)
+            }
+        }
+    }
+
+    private fun normalizeControl(value: Float, scale: Int, deadZone: Int, limit: Int): Int {
+        val scaled = (value * scale).toInt().coerceIn(-limit, limit)
+        return if (abs(scaled) < deadZone) 0 else scaled
     }
 
     fun getPairedDevices(): List<BluetoothDevice> {
@@ -82,18 +208,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun processReceivedData(raw: String) {
         val messages = protocolEngine.parseRawData(raw)
-        val state = _carState.value
 
         for (msg in messages) {
             when (msg) {
                 is ProtocolMessage.MotorStatus -> {
-                    _carState.value = state.copy(
+                    _carState.value = _carState.value.copy(
                         motorSpeeds = msg.speeds,
                         lastReceivedRaw = raw.trim()
                     )
                 }
                 is ProtocolMessage.PlotData -> {
-                    _carState.value = state.copy(
+                    _carState.value = _carState.value.copy(
                         motorSpeeds = msg.data,
                         lastReceivedRaw = raw.trim()
                     )
@@ -101,12 +226,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ProtocolMessage.Valve -> {
                     addLog("RX: ${msg.valveIndex}=${msg.state}")
                     if (msg.valveIndex == "valve2") {
-                        _carState.value = state.copy(
+                        _carState.value = _carState.value.copy(
                             valve2On = msg.isOn,
                             lastReceivedRaw = raw.trim()
                         )
                     } else {
-                        _carState.value = state.copy(
+                        _carState.value = _carState.value.copy(
                             valveOn = msg.isOn,
                             lastReceivedRaw = raw.trim()
                         )
@@ -114,53 +239,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 is ProtocolMessage.ValveError -> {
                     addLog("RX: valve error ${msg.error}")
-                    _carState.value = state.copy(lastReceivedRaw = raw.trim())
+                    _carState.value = _carState.value.copy(lastReceivedRaw = raw.trim())
                 }
                 is ProtocolMessage.Raw -> {
                     addLog("RX: ${msg.command} ${msg.params}")
-                    _carState.value = state.copy(lastReceivedRaw = raw.trim())
+                    _carState.value = _carState.value.copy(lastReceivedRaw = raw.trim())
                 }
                 is ProtocolMessage.Text -> {
                     addLog("RX: ${msg.content}")
+                    _carState.value = _carState.value.copy(lastReceivedRaw = raw.trim())
                 }
                 else -> {
-                    _carState.value = state.copy(lastReceivedRaw = raw.trim())
+                    _carState.value = _carState.value.copy(lastReceivedRaw = raw.trim())
                 }
             }
         }
 
         if (messages.isEmpty() && raw.isNotBlank()) {
             addLog("RX: ${raw.trim()}")
-            _carState.value = state.copy(lastReceivedRaw = raw.trim())
+            _carState.value = _carState.value.copy(lastReceivedRaw = raw.trim())
         }
     }
 
     fun sendJoystick(lx: Int, ly: Int, rx: Int = 0, ry: Int = 0) {
-        val data = protocolEngine.createJoystick(lx, ly, rx, ry)
-        connectionManager.send(data)
+        connectionManager.sendRealtime(
+            key = "joystick",
+            data = protocolEngine.createJoystick(lx, ly, rx, ry)
+        )
     }
 
     fun sendGripper(xSpeed: Int, ySpeed: Int) {
-        val data = protocolEngine.createGripper(xSpeed, ySpeed)
-        connectionManager.send(data)
+        connectionManager.sendRealtime(
+            key = "gripper",
+            data = protocolEngine.createGripper(xSpeed, ySpeed)
+        )
     }
 
-    // ===== 电磁阀（夹爪开合） =====
+    // ===== 电磁阀1（PE10，夹爪开合） =====
     fun sendValveOn() {
-        connectionManager.send(protocolEngine.createValve1On())
+        connectionManager.sendReliable(
+            key = "valve1",
+            data = protocolEngine.createValve1On(),
+            ackToken = "[valve1:on]"
+        )
     }
 
     fun sendValveOff() {
-        connectionManager.send(protocolEngine.createValve1Off())
+        connectionManager.sendReliable(
+            key = "valve1",
+            data = protocolEngine.createValve1Off(),
+            ackToken = "[valve1:off]"
+        )
     }
 
-    // ===== 电磁阀2（夹爪伸缩） =====
+    // ===== 电磁阀2（PE6，夹爪伸缩） =====
     fun sendValve2On() {
-        connectionManager.send(protocolEngine.createValve2On())
+        connectionManager.sendReliable(
+            key = "valve2",
+            data = protocolEngine.createValve2On(),
+            ackToken = "[valve2:on]"
+        )
     }
 
     fun sendValve2Off() {
-        connectionManager.send(protocolEngine.createValve2Off())
+        connectionManager.sendReliable(
+            key = "valve2",
+            data = protocolEngine.createValve2Off(),
+            ackToken = "[valve2:off]"
+        )
     }
 
     fun sendValveToggle() {
@@ -168,7 +314,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendValvePulse(ms: Int = 150) {
-        connectionManager.send(protocolEngine.createValve1Pulse(ms))
+        connectionManager.sendReliable(
+            key = "valve1",
+            data = protocolEngine.createValve1Pulse(ms),
+            ackToken = "[valve1:pulse]"
+        )
     }
 
     fun sendValveQuery() {
@@ -196,8 +346,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendStop() {
-        connectionManager.send(protocolEngine.createJoystick(0, 0, 0, 0))
-        connectionManager.send(protocolEngine.createGripper(0, 0))
+        _carState.value = _carState.value.copy(
+            moveX = 0f,
+            moveY = 0f,
+            turnX = 0f,
+            gripperUpDown = 0f
+        )
+        connectionManager.sendEmergencyStop(
+            joystickStop = protocolEngine.createJoystick(0, 0, 0, 0),
+            gripperStop = protocolEngine.createGripper(0, 0),
+            totalSends = 4
+        )
     }
 
     fun sendCustomCommand(command: String) {
