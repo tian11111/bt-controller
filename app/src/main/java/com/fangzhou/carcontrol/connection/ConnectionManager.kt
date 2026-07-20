@@ -53,7 +53,7 @@ class ConnectionManager(private val context: Context) {
                 ConnectionType.NONE -> false
             }
         },
-        minFrameIntervalMs = 40L
+        minFrameIntervalMs = 20L
     )
     val sendEvents: SharedFlow<SendEvent> = scheduler.events
 

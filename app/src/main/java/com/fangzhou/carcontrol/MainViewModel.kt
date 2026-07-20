@@ -42,7 +42,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val CONTROL_POLL_MS = 10L
-        private const val CONTROL_MIN_SEND_MS = 40L
+        private const val CONTROL_MIN_SEND_MS = 20L
         private const val CONTROL_HEARTBEAT_MS = 100L
         private const val CONTROL_CHANGE_THRESHOLD = 10
     }
