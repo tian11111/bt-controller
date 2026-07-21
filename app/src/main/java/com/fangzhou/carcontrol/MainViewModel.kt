@@ -366,11 +366,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateMoveJoystick(x: Float, y: Float) {
-        _carState.value = _carState.value.copy(moveX = x, moveY = y)
+        // 水平分量≥垂直分量(夹角≤45°)时取反X，竖移方向保持原值
+        val adjustedX = if (kotlin.math.abs(y) <= kotlin.math.abs(x)) -x else x
+        _carState.value = _carState.value.copy(moveX = adjustedX, moveY = y)
     }
 
     fun updateTurnJoystick(x: Float) {
-        _carState.value = _carState.value.copy(turnX = x)
+        _carState.value = _carState.value.copy(turnX = -x)
     }
 
     fun updateGripperUpDown(value: Float) {
