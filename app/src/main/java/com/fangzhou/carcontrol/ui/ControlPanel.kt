@@ -14,6 +14,8 @@ import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -84,6 +86,7 @@ fun ControlPanel(
     var parentSize by remember { mutableStateOf(IntSize(1080, 600)) }
     var showAddButton by remember { mutableStateOf(false) }
     var showCustomCmd by remember { mutableStateOf(false) }
+    var editingWidget by remember { mutableStateOf<com.fangzhou.carcontrol.layout.WidgetLayout?>(null) }
 
     // 编辑模式边框透明度动画
     val editBorderAlpha by animateFloatAsState(
@@ -98,7 +101,7 @@ fun ControlPanel(
             .background(Color(0xFF0F0F23))
             .onSizeChanged { parentSize = it }
     ) {
-        LayoutWidgets(viewModel, connectionState, parentSize, isEditing)
+        LayoutWidgets(viewModel, connectionState, parentSize, isEditing, onEditWidget = { editingWidget = it })
 
         Toolbar(
             connectionState = connectionState,
@@ -123,6 +126,26 @@ fun ControlPanel(
                     viewModel.addCustomButton(label, cmd, color)
                     showAddButton = false
                 }
+            )
+        }
+
+        // 长按编辑自定义按钮
+        editingWidget?.let { widget ->
+            AddCustomButtonDialog(
+                onDismiss = { editingWidget = null },
+                onAdd = { label, cmd, color ->
+                    if (widget.isCustom) {
+                        viewModel.updateCustomButton(widget.id, label, cmd, color)
+                    } else {
+                        viewModel.updateWidgetMeta(widget.id, label, cmd, color)
+                    }
+                    editingWidget = null
+                },
+                initialLabel = widget.label.orEmpty().ifBlank { widget.id },
+                initialCommand = widget.command.orEmpty(),
+                initialColorHex = widget.colorHex,
+                title = if (widget.isCustom) "编辑自定义按钮" else "覆盖控件命令",
+                confirmText = "保存"
             )
         }
 
@@ -153,7 +176,7 @@ private fun VerticalSlider(
             valueRange = -1f..1f,
             modifier = Modifier
                 .height(60.dp)
-                .width(200.dp)
+                .width(260.dp)
                 .graphicsLayer { rotationZ = -90f },
             colors = SliderDefaults.colors(
                 thumbColor = Color(0xFFAB47BC),
@@ -167,20 +190,19 @@ private fun VerticalSlider(
 // ==================== 统一布局 ====================
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun BoxScope.LayoutWidgets(
     viewModel: MainViewModel,
     connectionState: UnifiedConnectionState,
     parentSize: IntSize,
-    isEditing: Boolean
+    isEditing: Boolean,
+    onEditWidget: (com.fangzhou.carcontrol.layout.WidgetLayout) -> Unit = {}
 ) {
     val layoutConfig by viewModel.layoutConfig.collectAsState()
     val carState by viewModel.carState.collectAsState()
     val haptic = rememberHaptic()
 
-    val w = { id: String -> layoutConfig.widgets.find { it.id == id     }
-}
-
-// ==================== 带动画的按钮组件 ====================
+    val w = { id: String -> layoutConfig.widgets.find { it.id == id } }
 
     // ---- 移动摇杆 ----
     val moveW = w(WidgetIds.JOYSTICK_MOVE)
@@ -192,8 +214,16 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.JOYSTICK_MOVE, dx, dy) },
             parentSize = parentSize
         ) {
-            JoystickPad(size = (150 * (moveW?.scale ?: 1f)).dp, label = "移动(推幅=速度)", activeColor = Color(0xFF4FC3F7), onDragStart = { haptic.tick() }) { x, y ->
-                viewModel.updateMoveJoystick(x, y)
+            Box {
+                JoystickPad(size = (150 * (moveW?.scale ?: 1f)).dp, label = "移动(推幅=速度)", activeColor = Color(0xFF4FC3F7), onDragStart = { haptic.tick() }) { x, y ->
+                    viewModel.updateMoveJoystick(x, y)
+                }
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.JOYSTICK_MOVE) }
+                    )
+                }
             }
         }
     }
@@ -208,8 +238,16 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.JOYSTICK_TURN, dx, dy) },
             parentSize = parentSize
         ) {
-            JoystickPad(size = (120 * (turnW?.scale ?: 1f)).dp, label = "转向", activeColor = Color(0xFFFFD54F), onDragStart = { haptic.tick() }) { x, _ ->
-                viewModel.updateTurnJoystick(x)
+            Box {
+                JoystickPad(size = (120 * (turnW?.scale ?: 1f)).dp, label = "转向", activeColor = Color(0xFFFFD54F), onDragStart = { haptic.tick() }) { x, _ ->
+                    viewModel.updateTurnJoystick(x)
+                }
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.JOYSTICK_TURN) }
+                    )
+                }
             }
         }
     }
@@ -224,15 +262,23 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.SLIDER_GRIPPER_UPDOWN, dx, dy) },
             parentSize = parentSize
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("夹爪升降", color = Color(0xFF888899), fontSize = 12.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                VerticalSlider(
-                    value = carState.gripperUpDown,
-                    onValueChange = { viewModel.updateGripperUpDown(it) },
-                    onValueChangeFinished = { viewModel.updateGripperUpDown(0f) },
-                    modifier = Modifier.height(250.dp).width(80.dp)
-                )
+            Box {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("夹爪升降", color = Color(0xFF888899), fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    VerticalSlider(
+                        value = carState.gripperUpDown,
+                        onValueChange = { viewModel.updateGripperUpDown(it) },
+                        onValueChangeFinished = { viewModel.updateGripperUpDown(0f) },
+                        modifier = Modifier.height(400.dp).width(260.dp)
+                    )
+                }
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.SLIDER_GRIPPER_UPDOWN) }
+                    )
+                }
             }
         }
     }
@@ -247,15 +293,31 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_GRIPPER_OPEN, dx, dy) },
             parentSize = parentSize
         ) {
-            GripperButton(
-                text = "夹爪开",
-                isActive = carState.valveOn,
-                activeColor = Color(0xFF66BB6A),
-                onClick = {
-                    haptic.medium()
-                    viewModel.sendValveOn()
+            Box {
+                GripperButton(
+                    text = openW?.label ?: "夹爪开",
+                    isActive = carState.valveOn,
+                    activeColor = Color(0xFF66BB6A),
+                    onClick = {
+                        haptic.medium()
+                        val cmd = openW?.command
+                        if (!cmd.isNullOrBlank()) viewModel.sendCustomCommand(cmd) else viewModel.sendValveOn()
+                    }
+                )
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.BUTTON_GRIPPER_OPEN) },
+                        onEdit = {
+                            haptic.tick()
+                            onEditWidget(
+                                (openW ?: com.fangzhou.carcontrol.layout.WidgetLayout(id = WidgetIds.BUTTON_GRIPPER_OPEN))
+                                    .copy(label = openW?.label ?: "夹爪开", command = openW?.command ?: "[valve1,on]")
+                            )
+                        }
+                    )
                 }
-            )
+            }
         }
     }
 
@@ -269,15 +331,31 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_GRIPPER_CLOSE, dx, dy) },
             parentSize = parentSize
         ) {
-            GripperButton(
-                text = "夹爪关",
-                isActive = !carState.valveOn,
-                activeColor = Color(0xFFEF5350),
-                onClick = {
-                    haptic.medium()
-                    viewModel.sendValveOff()
+            Box {
+                GripperButton(
+                    text = closeW?.label ?: "夹爪关",
+                    isActive = !carState.valveOn,
+                    activeColor = Color(0xFFEF5350),
+                    onClick = {
+                        haptic.medium()
+                        val cmd = closeW?.command
+                        if (!cmd.isNullOrBlank()) viewModel.sendCustomCommand(cmd) else viewModel.sendValveOff()
+                    }
+                )
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.BUTTON_GRIPPER_CLOSE) },
+                        onEdit = {
+                            haptic.tick()
+                            onEditWidget(
+                                (closeW ?: com.fangzhou.carcontrol.layout.WidgetLayout(id = WidgetIds.BUTTON_GRIPPER_CLOSE))
+                                    .copy(label = closeW?.label ?: "夹爪关", command = closeW?.command ?: "[valve1,off]")
+                            )
+                        }
+                    )
                 }
-            )
+            }
         }
     }
 
@@ -291,15 +369,31 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_VALVE2_OPEN, dx, dy) },
             parentSize = parentSize
         ) {
-            GripperButton(
-                text = "伸缩出",
-                isActive = carState.valve2On,
-                activeColor = Color(0xFF26A69A),
-                onClick = {
-                    haptic.medium()
-                    viewModel.sendValve2On()
+            Box {
+                GripperButton(
+                    text = v2openW?.label ?: "伸缩出",
+                    isActive = carState.valve2On,
+                    activeColor = Color(0xFF26A69A),
+                    onClick = {
+                        haptic.medium()
+                        val cmd = v2openW?.command
+                        if (!cmd.isNullOrBlank()) viewModel.sendCustomCommand(cmd) else viewModel.sendValve2On()
+                    }
+                )
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.BUTTON_VALVE2_OPEN) },
+                        onEdit = {
+                            haptic.tick()
+                            onEditWidget(
+                                (v2openW ?: com.fangzhou.carcontrol.layout.WidgetLayout(id = WidgetIds.BUTTON_VALVE2_OPEN))
+                                    .copy(label = v2openW?.label ?: "伸缩出", command = v2openW?.command ?: "[valve2,on]")
+                            )
+                        }
+                    )
                 }
-            )
+            }
         }
     }
 
@@ -313,15 +407,31 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_VALVE2_CLOSE, dx, dy) },
             parentSize = parentSize
         ) {
-            GripperButton(
-                text = "伸缩缩",
-                isActive = !carState.valve2On,
-                activeColor = Color(0xFFFF7043),
-                onClick = {
-                    haptic.medium()
-                    viewModel.sendValve2Off()
+            Box {
+                GripperButton(
+                    text = v2closeW?.label ?: "伸缩缩",
+                    isActive = !carState.valve2On,
+                    activeColor = Color(0xFFFF7043),
+                    onClick = {
+                        haptic.medium()
+                        val cmd = v2closeW?.command
+                        if (!cmd.isNullOrBlank()) viewModel.sendCustomCommand(cmd) else viewModel.sendValve2Off()
+                    }
+                )
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.BUTTON_VALVE2_CLOSE) },
+                        onEdit = {
+                            haptic.tick()
+                            onEditWidget(
+                                (v2closeW ?: com.fangzhou.carcontrol.layout.WidgetLayout(id = WidgetIds.BUTTON_VALVE2_CLOSE))
+                                    .copy(label = v2closeW?.label ?: "伸缩缩", command = v2closeW?.command ?: "[valve2,off]")
+                            )
+                        }
+                    )
                 }
-            )
+            }
         }
     }
 
@@ -335,10 +445,29 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.BUTTON_STOP, dx, dy) },
             parentSize = parentSize
         ) {
-            IconButton(
-                onClick = { haptic.heavy(); viewModel.sendStop() },
-                modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF333355)).padding(4.dp)
-            ) { Icon(Icons.Default.Stop, "急停", tint = Color(0xFFEF5350)) }
+            Box {
+                IconButton(
+                    onClick = {
+                        haptic.heavy()
+                        val cmd = stopW?.command
+                        if (!cmd.isNullOrBlank()) viewModel.sendCustomCommand(cmd) else viewModel.sendStop()
+                    },
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF333355)).padding(4.dp)
+                ) { Icon(Icons.Default.Stop, "急停", tint = Color(0xFFEF5350)) }
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.BUTTON_STOP) },
+                        onEdit = {
+                            haptic.tick()
+                            onEditWidget(
+                                (stopW ?: com.fangzhou.carcontrol.layout.WidgetLayout(id = WidgetIds.BUTTON_STOP))
+                                    .copy(label = "急停", command = stopW?.command ?: "")
+                            )
+                        }
+                    )
+                }
+            }
         }
     }
 
@@ -352,26 +481,34 @@ private fun BoxScope.LayoutWidgets(
             onOffsetChange = { dx, dy -> viewModel.updateWidgetPosition(WidgetIds.STATUS_DISPLAY, dx, dy) },
             parentSize = parentSize
         ) {
-            StatusDisplay(
-                motorSpeeds = carState.motorSpeeds,
-                lastReceived = carState.lastReceivedRaw,
-                logMessages = carState.logMessages,
-                valveOn = carState.valveOn,
-                connectionLabel = when (connectionState) {
-                            UnifiedConnectionState.CONNECTED -> "已连接"
-                            UnifiedConnectionState.CONNECTING -> "连接中..."
-                            UnifiedConnectionState.ERROR -> "连接失败"
-                            UnifiedConnectionState.DISCONNECTED -> "未连接"
-                        },
-                modifier = Modifier
-                    .width((220 * (statusW?.scale ?: 1f)).dp)
-                    .fillMaxHeight(0.88f)
-            )
+            Box {
+                StatusDisplay(
+                    motorSpeeds = carState.motorSpeeds,
+                    lastReceived = carState.lastReceivedRaw,
+                    logMessages = carState.logMessages,
+                    valveOn = carState.valveOn,
+                    connectionLabel = when (connectionState) {
+                                UnifiedConnectionState.CONNECTED -> "已连接"
+                                UnifiedConnectionState.CONNECTING -> "连接中..."
+                                UnifiedConnectionState.ERROR -> "连接失败"
+                                UnifiedConnectionState.DISCONNECTED -> "未连接"
+                            },
+                    modifier = Modifier
+                        .width((220 * (statusW?.scale ?: 1f)).dp)
+                        .fillMaxHeight(0.88f)
+                )
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    EditableActionBadge(
+                        isEditing = isEditing,
+                        onDelete = { haptic.heavy(); viewModel.removeWidget(WidgetIds.STATUS_DISPLAY) }
+                    )
+                }
+            }
         }
     }
 
     // ---- 自定义按钮 ----
-    val customWidgets = layoutConfig.widgets.filter { it.isCustom }
+    val customWidgets = layoutConfig.widgets.filter { it.isCustom && it.visible }
     for (widget in customWidgets) {
         DraggableWidget(
             isEditing = isEditing,
@@ -381,11 +518,24 @@ private fun BoxScope.LayoutWidgets(
             parentSize = parentSize
         ) {
             Box {
-                Button(
-                    onClick = { haptic.medium(); viewModel.sendCustomCommand(widget.command.orEmpty()) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(widget.colorHex).copy(alpha = 0.85f)),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.graphicsLayer { scaleX = widget.scale; scaleY = widget.scale }
+                Box(
+                    modifier = Modifier
+                        .graphicsLayer { scaleX = widget.scale; scaleY = widget.scale }
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(widget.colorHex).copy(alpha = 0.85f))
+                        .combinedClickable(
+                            onClick = {
+                                if (!isEditing) {
+                                    haptic.medium()
+                                    viewModel.sendCustomCommand(widget.command.orEmpty())
+                                }
+                            },
+                            onLongClick = {
+                                haptic.tick()
+                                onEditWidget(widget)
+                            }
+                        )
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
                 ) {
                     Text(widget.label.orEmpty(), fontSize = 12.sp, color = Color.White)
                 }
@@ -409,6 +559,63 @@ private fun BoxScope.LayoutWidgets(
                     }
                 }
             }
+        }
+    }
+
+    // 编辑模式：恢复已隐藏的内置控件
+    if (isEditing) {
+        val hiddenBuiltIns = layoutConfig.widgets.filter { !it.isCustom && !it.visible }
+        if (hiddenBuiltIns.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color(0xCC16162E))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("已隐藏 ${hiddenBuiltIns.size} 个控件", color = Color(0xFF888899), fontSize = 12.sp)
+                Button(
+                    onClick = { haptic.light(); viewModel.restoreHiddenWidgets() },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4FC3F7).copy(alpha = 0.8f)),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("全部恢复", fontSize = 12.sp, color = Color.White)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditableActionBadge(
+    isEditing: Boolean,
+    onDelete: () -> Unit,
+    onEdit: (() -> Unit)? = null
+) {
+    if (!isEditing) return
+    Row(modifier = Modifier) {
+        if (onEdit != null) {
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier
+                    .size(20.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF4FC3F7))
+            ) {
+                Icon(Icons.Default.Edit, contentDescription = "编辑命令", tint = Color.White, modifier = Modifier.size(12.dp))
+            }
+        }
+        IconButton(
+            onClick = onDelete,
+            modifier = Modifier
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(Color(0xFFEF5350))
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "删除/隐藏", tint = Color.White, modifier = Modifier.size(12.dp))
         }
     }
 }
