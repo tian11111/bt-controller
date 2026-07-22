@@ -360,9 +360,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendCustomCommand(command: String) {
-        val normalized = if (command.endsWith("\r\n")) command else "$command\r\n"
-        connectionManager.send(normalized)
-        addLog("TX: $command")
+        val trimmed = command.trim()
+        if (trimmed.isEmpty()) return
+        val framed = when {
+            trimmed.endsWith("\r\n") -> trimmed
+            trimmed.startsWith("[") -> if (trimmed.endsWith("\n")) trimmed else "$trimmed\r\n"
+            else -> "[$trimmed]\r\n"
+        }
+        connectionManager.send(framed)
+        addLog("TX: ${framed.trim()}")
     }
 
     fun updateMoveJoystick(x: Float, y: Float) {
@@ -462,9 +468,65 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _layoutConfig.value = current.copy(widgets = current.widgets + newWidget)
     }
 
+    fun updateCustomButton(id: String, label: String, command: String, colorHex: Long) {
+        val current = _layoutConfig.value
+        val updated = current.widgets.map {
+            if (it.id == id) {
+                it.copy(label = label, command = command, colorHex = colorHex, isCustom = true)
+            } else it
+        }
+        _layoutConfig.value = current.copy(widgets = updated)
+    }
+
+    fun setWidgetCommand(id: String, command: String?) {
+        val current = _layoutConfig.value
+        val cmd = command?.trim()?.ifEmpty { null }
+        val updated = current.widgets.map {
+            if (it.id == id) it.copy(command = cmd) else it
+        }
+        _layoutConfig.value = current.copy(widgets = updated)
+    }
+
+    fun updateWidgetMeta(id: String, label: String?, command: String?, colorHex: Long? = null) {
+        val current = _layoutConfig.value
+        val cmd = command?.trim()?.ifEmpty { null }
+        val updated = current.widgets.map {
+            if (it.id != id) it
+            else it.copy(
+                label = label ?: it.label,
+                command = if (command == null) it.command else cmd,
+                colorHex = colorHex ?: it.colorHex
+            )
+        }
+        _layoutConfig.value = current.copy(widgets = updated)
+    }
+
+    fun setWidgetVisible(id: String, visible: Boolean) {
+        val current = _layoutConfig.value
+        val updated = current.widgets.map {
+            if (it.id == id) it.copy(visible = visible) else it
+        }
+        _layoutConfig.value = current.copy(widgets = updated)
+    }
+
     fun removeWidget(id: String) {
         val current = _layoutConfig.value
-        _layoutConfig.value = current.copy(widgets = current.widgets.filter { it.id != id })
+        val target = current.widgets.find { it.id == id }
+        _layoutConfig.value = if (target?.isCustom == true) {
+            current.copy(widgets = current.widgets.filter { it.id != id })
+        } else {
+            // built-in widgets are hidden so they can be restored later
+            current.copy(widgets = current.widgets.map {
+                if (it.id == id) it.copy(visible = false) else it
+            })
+        }
+    }
+
+    fun restoreHiddenWidgets() {
+        val current = _layoutConfig.value
+        _layoutConfig.value = current.copy(
+            widgets = current.widgets.map { if (!it.isCustom) it.copy(visible = true) else it }
+        )
     }
 
     override fun onCleared() {

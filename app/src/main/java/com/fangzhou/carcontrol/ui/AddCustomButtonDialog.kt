@@ -1,6 +1,7 @@
 package com.fangzhou.carcontrol.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,10 +10,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -43,18 +46,28 @@ private val COLOR_PRESETS = listOf(
 @Composable
 fun AddCustomButtonDialog(
     onDismiss: () -> Unit,
-    onAdd: (label: String, command: String, colorHex: Long) -> Unit
+    onAdd: (label: String, command: String, colorHex: Long) -> Unit,
+    initialLabel: String = "",
+    initialCommand: String = "",
+    initialColorHex: Long = COLOR_PRESETS[0].first,
+    title: String = "添加自定义按钮",
+    confirmText: String = "添加"
 ) {
-    var label by remember { mutableStateOf("") }
-    var command by remember { mutableStateOf("") }
-    var selectedColor by remember { mutableStateOf(COLOR_PRESETS[0].first) }
+    var label by remember { mutableStateOf(initialLabel) }
+    var command by remember { mutableStateOf(initialCommand) }
+    var selectedColor by remember { mutableStateOf(initialColorHex) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF1E1E3F),
-        title = { Text("添加自定义按钮", color = Color.White, fontSize = 16.sp) },
+        title = { Text(title, color = Color.White, fontSize = 16.sp) },
         text = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
@@ -74,7 +87,7 @@ fun AddCustomButtonDialog(
                 OutlinedTextField(
                     value = command,
                     onValueChange = { command = it },
-                    label = { Text("发送命令 (如 [motor,1,100])") },
+                    label = { Text("发送命令 (如 [valve1,on] 或 [motor,1,100])") },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedTextColor = Color.White, unfocusedTextColor = Color.White,
@@ -87,29 +100,29 @@ fun AddCustomButtonDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text("颜色", color = Color(0xFF888899), fontSize = 12.sp)
+                Text("颜色选择", color = Color(0xFF888899), fontSize = 12.sp)
                 Spacer(modifier = Modifier.height(4.dp))
 
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    COLOR_PRESETS.forEach { (colorHex, _) ->
-                        val isSelected = selectedColor == colorHex
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color(colorHex))
-                                .then(
-                                    if (isSelected) Modifier
-                                        .padding(3.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White.copy(alpha = 0.4f))
-                                    else Modifier
-                                )
-                                .clickable { selectedColor = colorHex }
-                        )
+                COLOR_PRESETS.chunked(4).forEachIndexed { rowIndex, rowColors ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(bottom = if (rowIndex == 1) 0.dp else 10.dp)
+                    ) {
+                        rowColors.forEach { (colorHex, _) ->
+                            val isSelected = selectedColor == colorHex
+                            Box(
+                                modifier = Modifier
+                                    .size(42.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(colorHex))
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.25f),
+                                        shape = CircleShape
+                                    )
+                                    .clickable { selectedColor = colorHex }
+                            )
+                        }
                     }
                 }
             }
@@ -122,7 +135,7 @@ fun AddCustomButtonDialog(
                         onDismiss()
                     }
                 }
-            ) { Text("添加", color = Color(0xFF4FC3F7)) }
+            ) { Text(confirmText, color = Color(0xFF4FC3F7)) }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消", color = Color(0xFF888899)) }
